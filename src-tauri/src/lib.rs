@@ -118,6 +118,24 @@ fn whoami_hostname() -> String {
         .unwrap_or_else(|| "Afterlife-Host".to_string())
 }
 
+/// このマシンのLAN側IPv4アドレスを推定する。実際には通信を発生させず、
+/// UDPソケットをルーティング先に`connect`してOSに選ばせた送信元アドレスを読むだけ
+/// （8.8.8.8への到達性は問わない）。mDNS発見がIPv6リンクローカルしか返さない
+/// 場合でも、子機の手動IP入力用に確実なIPv4を案内できるようにするため。
+fn local_ipv4() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(addr) => Some(addr.to_string()),
+        std::net::IpAddr::V6(_) => None,
+    }
+}
+
+#[tauri::command]
+fn host_local_address() -> Option<String> {
+    local_ipv4().map(|ip| format!("{ip}:{PORT}"))
+}
+
 // ---------- 子機: 発見・接続 ----------
 
 #[tauri::command]
@@ -434,6 +452,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             initial_role,
+            host_local_address,
             start_host,
             stop_host,
             host_send_click,

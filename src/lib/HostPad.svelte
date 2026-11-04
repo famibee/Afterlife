@@ -16,6 +16,7 @@
   let aspect = $state<"16:9" | "4:3">("16:9");
   let flashing = $state(false);
   let padEl: HTMLDivElement;
+  let localAddress = $state<string | null>(null);
 
   const aspectRatio = () => (aspect === "16:9" ? 16 / 9 : 4 / 3);
 
@@ -47,6 +48,7 @@
 
   onMount(async () => {
     await invoke("start_host");
+    localAddress = await invoke<string | null>("host_local_address");
     unlistenClients = await listen<ConnectedClient[]>("host-clients-changed", (event) => {
       clients = event.payload;
     });
@@ -70,6 +72,9 @@
   <header>
     <button class="back" onclick={back}>← 戻る</button>
     <h2>親機</h2>
+    {#if localAddress}
+      <span class="address">{localAddress}</span>
+    {/if}
     <select bind:value={aspect}>
       <option value="16:9">16:9</option>
       <option value="4:3">4:3</option>
@@ -130,6 +135,14 @@
   header h2 {
     margin: 0;
     flex: 1;
+  }
+  .address {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    opacity: 0.65;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    background: rgba(127, 127, 127, 0.12);
   }
   .back {
     background: none;
