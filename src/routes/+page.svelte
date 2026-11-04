@@ -1,9 +1,21 @@
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
   import RoleSelect from "$lib/RoleSelect.svelte";
   import HostPad from "$lib/HostPad.svelte";
   import ClientSetup from "$lib/ClientSetup.svelte";
 
   let role = $state<"none" | "host" | "client">("none");
+
+  // `--role=host`/`--role=client`引数か`AFTERLIFE_ROLE`環境変数が指定されていれば、
+  // ロール選択画面を飛ばして自動的にその画面へ入る（AIエージェントが手動クリック
+  // なしで起動できるようにするため）。
+  onMount(async () => {
+    const initial = await invoke<string | null>("initial_role");
+    if (initial === "host" || initial === "client") {
+      role = initial;
+    }
+  });
 </script>
 
 {#if role === "none"}

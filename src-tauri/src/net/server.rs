@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures_util::{SinkExt, StreamExt};
 use mdns_sd::ServiceDaemon;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, Mutex};
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::protocol::{ClientMsg, ServerMsg, PORT};
 
@@ -25,12 +28,17 @@ pub struct HostState {
     /// mDNS広告の daemon。これを drop すると広告が止まるので保持し続ける。
     pub mdns: Mutex<Option<ServiceDaemon>>,
     pub sidecar: Mutex<Option<SidecarHandle>>,
+    pub direct: Mutex<Option<DirectHandle>>,
 }
 
 pub struct SidecarHandle {
     pub child: Child,
     pub reader_task: tauri::async_runtime::JoinHandle<()>,
     pub writer_task: tauri::async_runtime::JoinHandle<()>,
+}
+
+pub struct DirectHandle {
+    pub accept_task: tauri::async_runtime::JoinHandle<()>,
 }
 
 impl HostState {
@@ -41,6 +49,7 @@ impl HostState {
             broadcast_tx,
             mdns: Mutex::new(None),
             sidecar: Mutex::new(None),
+            direct: Mutex::new(None),
         }
     }
 
@@ -158,31 +167,7 @@ async fn handle_sidecar_event(app: &AppHandle, state: &Arc<HostState>, line: &st
             let Some(data) = event.get("data").and_then(|v| v.as_str()) else {
                 return;
             };
-            match serde_json::from_str::<ClientMsg>(data) {
-                Ok(ClientMsg::Hello { name, os, .. }) => {
-                    eprintln!("[host] client#{id}: Hello accepted (name={name}, os={os})");
-                    state.clients.lock().await.insert(
-                        id,
-                        ConnectedClient {
-                            id,
-                            name,
-                            os,
-                            target: None,
-                        },
-                    );
-                    emit_clients(app, state).await;
-                }
-                Ok(ClientMsg::Status { target }) => {
-                    if let Some(c) = state.clients.lock().await.get_mut(&id) {
-                        c.target = target;
-                    }
-                    emit_clients(app, state).await;
-                }
-                Ok(ClientMsg::Pong) => {}
-                Err(e) => {
-                    eprintln!("[host] client#{id}: failed to parse message: {e} (raw: {data:?})");
-                }
-            }
+            handle_client_text(app, state, id, data).await;
         }
         "close" => {
             let Some(id) = event.get("id").and_then(|v| v.as_u64()) else {
@@ -197,6 +182,133 @@ async fn handle_sidecar_event(app: &AppHandle, state: &Arc<HostState>, line: &st
         }
         _ => {}
     }
+}
+
+async fn handle_client_text(app: &AppHandle, state: &Arc<HostState>, id: u64, data: &str) {
+    match serde_json::from_str::<ClientMsg>(data) {
+        Ok(ClientMsg::Hello { name, os, .. }) => {
+            eprintln!("[host] client#{id}: Hello accepted (name={name}, os={os})");
+            state.clients.lock().await.insert(
+                id,
+                ConnectedClient {
+                    id,
+                    name,
+                    os,
+                    target: None,
+                },
+            );
+            emit_clients(app, state).await;
+        }
+        Ok(ClientMsg::Status { target }) => {
+            if let Some(c) = state.clients.lock().await.get_mut(&id) {
+                c.target = target;
+            }
+            emit_clients(app, state).await;
+        }
+        Ok(ClientMsg::Pong) => {}
+        Err(e) => {
+            eprintln!("[host] client#{id}: failed to parse message: {e} (raw: {data:?})");
+        }
+    }
+}
+
+/// `sidecar`を介さず、Rust本体で直接TCP+WebSocketをlistenする版。
+/// Avastの設定変更後、本当にBunサイドカーが必要か切り分けるための検証用。
+pub async fn start_direct(app: AppHandle, state: Arc<HostState>) -> std::io::Result<()> {
+    let listener = TcpListener::bind(("0.0.0.0", PORT)).await?;
+    eprintln!("[host] direct: listening on 0.0.0.0:{PORT}");
+
+    let state_for_task = state.clone();
+    let accept_task = tauri::async_runtime::spawn(async move {
+        let mut next_id: u64 = 1;
+        loop {
+            let (stream, addr) = match listener.accept().await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[host] direct: accept error: {e}");
+                    break;
+                }
+            };
+            let id = next_id;
+            next_id += 1;
+            eprintln!("[host] direct: accepted connection #{id} from {addr}");
+            tauri::async_runtime::spawn(handle_direct_connection(
+                app.clone(),
+                state_for_task.clone(),
+                stream,
+                id,
+            ));
+        }
+    });
+
+    *state.direct.lock().await = Some(DirectHandle { accept_task });
+    Ok(())
+}
+
+async fn handle_direct_connection(
+    app: AppHandle,
+    state: Arc<HostState>,
+    stream: tokio::net::TcpStream,
+    id: u64,
+) {
+    let ws = match tokio_tungstenite::accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("[host] direct: WebSocket handshake failed for #{id}: {e}");
+            return;
+        }
+    };
+    let (mut sink, mut stream) = ws.split();
+
+    let mut rx = state.broadcast_tx.subscribe();
+    let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<()>();
+    let writer_task = tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::select! {
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(msg) => {
+                            let Ok(payload) = serde_json::to_string(&msg) else { continue };
+                            if sink.send(Message::Text(payload.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = &mut close_rx => break,
+            }
+        }
+        let _ = sink.close().await;
+    });
+
+    while let Some(msg) = stream.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                handle_client_text(&app, &state, id, &text).await;
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[host] direct: connection #{id} read error: {e}");
+                break;
+            }
+        }
+    }
+
+    let _ = close_tx.send(());
+    let _ = writer_task.await;
+    eprintln!("[host] direct: connection #{id} closed");
+    state.clients.lock().await.remove(&id);
+    emit_clients(&app, &state).await;
+}
+
+pub async fn stop_direct(state: &Arc<HostState>) {
+    if let Some(handle) = state.direct.lock().await.take() {
+        handle.accept_task.abort();
+    }
+    state.clients.lock().await.clear();
 }
 
 async fn emit_clients(app: &AppHandle, state: &Arc<HostState>) {

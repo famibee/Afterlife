@@ -25,13 +25,14 @@ impl Injector {
     }
 
     /// クライアント領域の矩形(絶対座標)と正規化座標から、元のカーソル位置に戻しつつクリックする。
+    /// 戻り値は実際に着弾させた絶対座標(視覚フィードバック表示用)。
     pub fn click_in_rect(
         &self,
         rect: (i32, i32, i32, i32), // x, y, width, height
         norm_x: f32,
         norm_y: f32,
         button: ProtoMouseButton,
-    ) -> enigo::InputResult<()> {
+    ) -> enigo::InputResult<(i32, i32)> {
         let (rx, ry, rw, rh) = rect;
         // 正規化座標1.0がクライアント領域の外側(幅/高さそのもの)を指してしまい、
         // 枠の無いウィンドウや画面端では別ウィンドウ・画面外に着弾しうるため、
@@ -55,7 +56,7 @@ impl Injector {
         if let Some((ox, oy)) = original {
             let _ = enigo.move_mouse(ox, oy, Coordinate::Abs);
         }
-        Ok(())
+        Ok((abs_x, abs_y))
     }
 
     pub fn key(&self, code: &str, direction: KeyDirection) -> enigo::InputResult<()> {

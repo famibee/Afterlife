@@ -43,12 +43,20 @@ impl AppState {
 async fn start_host(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let host = state.host.clone();
 
-    if host.sidecar.lock().await.is_some() {
+    if host.sidecar.lock().await.is_some() || host.direct.lock().await.is_some() {
         return Ok(()); // 既に起動済み
     }
-    server::start_sidecar(app.clone(), host.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+    // `AFTERLIFE_DIRECT_NET=1` でBunサイドカーを介さずRust本体が直接listenする版を試せる
+    // （Avastの着信TCP遮断が設定変更で解消したかの切り分け用。既定はBunサイドカー）。
+    if std::env::var("AFTERLIFE_DIRECT_NET").as_deref() == Ok("1") {
+        server::start_direct(app.clone(), host.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        server::start_sidecar(app.clone(), host.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let daemon = ServiceDaemon::new().map_err(|e| e.to_string())?;
     let name = whoami_hostname();
@@ -62,6 +70,7 @@ async fn start_host(app: AppHandle, state: tauri::State<'_, AppState>) -> Result
 async fn stop_host(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let host = state.host.clone();
     server::stop_sidecar(&host).await;
+    server::stop_direct(&host).await;
     if let Some(daemon) = host.mdns.lock().await.take() {
         // dropするだけでは広告のgoodbyeパケットが送られないことがあるため、明示的にshutdownする
         let _ = daemon.shutdown();
@@ -87,6 +96,19 @@ fn host_send_key(state: tauri::State<'_, AppState>, code: String, direction: Str
         KeyDirection::Press
     };
     state.host.send(ServerMsg::Key { code, direction });
+}
+
+/// 起動時に親機/子機を自動選択するためのスイッチ。`--role=host` / `--role=client`
+/// 引数、または `AFTERLIFE_ROLE` 環境変数で指定する（CLI引数を優先）。
+/// AIエージェントがUIクリックなしでロール選択を飛ばして起動できるようにするためのもの。
+#[tauri::command]
+fn initial_role() -> Option<String> {
+    for arg in std::env::args().skip(1) {
+        if let Some(v) = arg.strip_prefix("--role=") {
+            return Some(v.to_string());
+        }
+    }
+    std::env::var("AFTERLIFE_ROLE").ok()
 }
 
 fn whoami_hostname() -> String {
@@ -250,15 +272,16 @@ fn client_hide_highlight(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn client_test_click(state: tauri::State<'_, AppState>) -> Result<(), String> {
+fn client_test_click(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let target = state.target.lock().unwrap().clone();
     let Some((id, _pid, _)) = target else {
         return Err("ウィンドウが選択されていません".to_string());
     };
-    perform_click(&state, id, 0.5, 0.5, MouseButton::Left)
+    perform_click(&app, &state, id, 0.5, 0.5, MouseButton::Left)
 }
 
 fn perform_click(
+    app: &AppHandle,
     state: &tauri::State<'_, AppState>,
     id: u64,
     norm_x: f32,
@@ -275,7 +298,7 @@ fn perform_click(
         platform::activate_window(id, pid);
     }
 
-    {
+    let landed = {
         let mut guard = state.injector.lock().unwrap();
         if guard.is_none() {
             *guard = Some(input::inject::Injector::new().map_err(|e| e.to_string())?);
@@ -283,13 +306,79 @@ fn perform_click(
         let injector = guard.as_ref().unwrap();
         injector
             .click_in_rect(rect, norm_x, norm_y, button)
-            .map_err(|e| e.to_string())?;
-    }
+            .map_err(|e| e.to_string())?
+    };
 
     if let Some(handle) = saved {
         platform::restore_focus(handle);
     }
+    show_click_feedback(app.clone(), landed.0, landed.1);
     Ok(())
+}
+
+/// クリックの着弾位置に、一瞬表示してフェードアウトする●を出す視覚フィードバック。
+/// Windowsでは、メインスレッド上で2つ目のWebView2を同期生成するとデッドロックする
+/// 既知の問題（`client_show_highlight`と同じ）があるため、ネイティブな非WebView実装に
+/// 置き換えるまで無効化する。
+const CLICK_FEEDBACK_LABEL: &str = "click-feedback-overlay";
+const CLICK_FEEDBACK_SIZE: i32 = 56;
+const CLICK_FEEDBACK_LIFETIME_MS: u64 = 650;
+
+fn show_click_feedback(app: AppHandle, x: i32, y: i32) {
+    #[cfg(windows)]
+    {
+        let _ = (app, x, y);
+        return;
+    }
+    #[cfg(not(windows))]
+    {
+        let half = CLICK_FEEDBACK_SIZE / 2;
+        let pos_x = (x - half) as f64;
+        let pos_y = (y - half) as f64;
+        let app_for_main = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            // 再生中のCSSフェードアニメーションを確実に最初から再生させるため、
+            // 表示のたびにウィンドウを作り直す（単なるshow/hideの再呼び出しでは
+            // アニメーションが再生されない）。
+            if let Some(win) = app_for_main.get_webview_window(CLICK_FEEDBACK_LABEL) {
+                let _ = win.close();
+            }
+            match WebviewWindowBuilder::new(
+                &app_for_main,
+                CLICK_FEEDBACK_LABEL,
+                WebviewUrl::App("click-feedback.html".into()),
+            )
+            .position(pos_x, pos_y)
+            .inner_size(CLICK_FEEDBACK_SIZE as f64, CLICK_FEEDBACK_SIZE as f64)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .shadow(false)
+            .build()
+            {
+                Ok(win) => {
+                    let _ = win.set_ignore_cursor_events(true);
+                    let app_for_close = app_for_main.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            CLICK_FEEDBACK_LIFETIME_MS,
+                        ))
+                        .await;
+                        let app_for_close_main = app_for_close.clone();
+                        let _ = app_for_close.run_on_main_thread(move || {
+                            if let Some(w) = app_for_close_main.get_webview_window(CLICK_FEEDBACK_LABEL) {
+                                let _ = w.close();
+                            }
+                        });
+                    });
+                }
+                Err(e) => eprintln!("[client] failed to create click feedback overlay: {e}"),
+            }
+            refocus_main(&app_for_main);
+        });
+    }
 }
 
 fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: ServerMsg) {
@@ -297,7 +386,7 @@ fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: S
     let Some(id) = target_id else { return };
     match msg {
         ServerMsg::Click { x, y, button } => {
-            if let Err(e) = perform_click(state, id, x, y, button) {
+            if let Err(e) = perform_click(app, state, id, x, y, button) {
                 eprintln!("click failed: {e}");
             }
         }
@@ -309,7 +398,6 @@ fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: S
         }
         ServerMsg::Ping => {}
     }
-    let _ = app; // reserved for future UI feedback events
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -345,6 +433,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            initial_role,
             start_host,
             stop_host,
             host_send_click,
