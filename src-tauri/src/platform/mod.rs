@@ -93,3 +93,47 @@ pub fn open_permission_settings() {}
 pub fn show_click_feedback(x: i32, y: i32) {
     windows::show_click_feedback(x, y);
 }
+
+/// 指定ウィンドウの内容をRGBAで取得する。
+#[cfg(target_os = "macos")]
+fn capture_window_rgba(id: u64) -> Option<(Vec<u8>, u32, u32)> {
+    macos::capture_window_rgba(id)
+}
+#[cfg(windows)]
+fn capture_window_rgba(id: u64) -> Option<(Vec<u8>, u32, u32)> {
+    windows::capture_window_rgba(id)
+}
+
+/// 単純な最近傍補間で`max_width`以下に縮小する（`max_width`以上ならそのまま）。
+fn downscale_rgba(src: &[u8], w: u32, h: u32, max_width: u32) -> (Vec<u8>, u32, u32) {
+    if w == 0 || h == 0 || w <= max_width {
+        return (src.to_vec(), w, h);
+    }
+    let scale = max_width as f32 / w as f32;
+    let nw = max_width.max(1);
+    let nh = (((h as f32) * scale).round() as u32).max(1);
+    let mut out = vec![0u8; (nw as usize) * (nh as usize) * 4];
+    for y in 0..nh {
+        let sy = (((y as f32 + 0.5) / scale) as u32).min(h - 1);
+        for x in 0..nw {
+            let sx = (((x as f32 + 0.5) / scale) as u32).min(w - 1);
+            let si = ((sy * w + sx) * 4) as usize;
+            let di = ((y * nw + x) * 4) as usize;
+            out[di..di + 4].copy_from_slice(&src[si..si + 4]);
+        }
+    }
+    (out, nw, nh)
+}
+
+/// 指定ウィンドウのスナップショットを撮り、`max_width`以下に縮小してJPEG化する。
+/// 親機の操作パッドに定期表示する用途を想定した低画質・低負荷な実装。
+pub fn capture_window_jpeg(id: u64, max_width: u32, quality: u8) -> Option<Vec<u8>> {
+    let (rgba, w, h) = capture_window_rgba(id)?;
+    let (rgba, w, h) = downscale_rgba(&rgba, w, h, max_width);
+    let mut buf = Vec::new();
+    let encoder = jpeg_encoder::Encoder::new(&mut buf, quality);
+    encoder
+        .encode(&rgba, w as u16, h as u16, jpeg_encoder::ColorType::Rgba)
+        .ok()?;
+    Some(buf)
+}

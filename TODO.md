@@ -10,6 +10,7 @@
 
 ## 未解決バグ
 
+- **devモード中、Viteのフルリロードが起きるとフロントエンドのロール状態がRoleSelectにリセットされ、親機のUIとバックエンドの状態がずれる**（2026-11-04発見）。`npm run tauri dev`実行中に何らかの変更でViteが完全ページリロード（`page reload .svelte-kit/generated/...`）を行うと、Svelteのコンポーネント状態（`role`等）が初期化されて画面がロール選択に戻るが、Rust側は`stop_host`が呼ばれないため親機（bunサイドカー含む）は動き続け、接続中の子機とのWebSocket接続も実際には生きている場合がある。この間、`HostPad.svelte`の`host-snapshot`等のイベントリスナーは外れているため、UIには何も反映されない。もう一度「親機」を選び直せば（`start_host`は既に起動済みなら早期returnするだけだが）コンポーネントが再マウントされてリスナーが復帰し、表示は復旧する。実機検証（Win子機がmac親機に接続中、mac側で作業してViteリロードが発生）で踏んだ。本番ビルド（Vite HMRなし）では起きないはずだが、開発時の体験として直しておく価値はある（例: `onMount`で現在の`AppState.host`の状態を照会し、もし既に稼働中ならRoleSelectを経由せず直接HostPadへ遷移する、等）。
 - **Win実機でテスト継続中にマシンごと無反応になり再起動が必要になる事例が2回発生**（2026-11-04、ユーザー報告。追加報告: タスクマネージャーの起動すら困難になるほど重い）。
   - 孤児プロセス蓄積の仮説（`npm run tauri dev`の繰り返し再起動でWebView2レンダラ`msedgewebview2.exe`やbunサイドカーが残り続ける）は、Win側の事後確認（再起動後）では裏付けられなかった：該当プロセスは残っておらず、メモリも約85%空きだった。ただしWin側の`tauri dev`起動は計3回のみで繰り返し再ビルドはしておらず、確認は重くなっていた最中ではなく再起動後の状態なので、仮説を否定するものでもない。
   - 別の手がかり: 「接続」押下の数秒後に`afterlife.exe`が理由不明で消えた事例が1回あった（Windowsのクラッシュイベント記録なし）。taskkill /Fでの強制終了は2回あったが、どちらもクリック注入の最中ではない。
@@ -21,8 +22,6 @@
 
 ## 未実装・設計検討
 
-- **クリック位置の視覚フィードバック**: mac側は実装・動作確認済み（`src-tauri/src/lib.rs`の`show_click_feedback`、`static/click-feedback.html`。クリック着弾位置に別ウィンドウで●を表示しCSSアニメーションでフェードアウト）。2026-11-04、mac自身をホストにした自己テスト(mac→mac)でTextEditドキュメント中央への着弾と●の表示をスクリーンショットで確認済み。検証の過程で、`platform/macos.rs`の`parse_bounds`が`kCGWindowBounds`の値を直接のキー(X/Y/Width/Height)として辞書のトップレベルから探していたバグ(実際は`kCGWindowBounds`キーの値自体がX/Y/Width/Heightを持つ入れ子の辞書)を発見・修正した。このバグにより、macが子機になる場合は`list_windows`/`window_rect`が常に失敗しており、クリック注入自体が機能しない状態だった（Win側検証では一度も踏んでいなかった）。
-  - **Windows版を実装済み（2026-11-04）**: `platform/windows.rs`にPowerToysの「Mouse Highlighter」「Find My Mouse」を参考にした素のWin32レイヤードウィンドウ実装(`show_click_feedback`)を追加した。専用スレッドで正方形のウィンドウを一度だけ作り（`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`）、クリックのたびに`PostThreadMessageW`で位置を送って再表示し、`SetLayeredWindowAttributes`のアルファ値をタイマーで下げてフェードアウトさせる。WebViewは一切使わないため、Tauriの2枚目WebView2デッドロック問題を回避できる設計。mac側からはWindowsターゲットのコードをコンパイルできなかったため（`cargo check --target x86_64-pc-windows-msvc`を試みたが、このマシンのrustupツールチェーンのバージョン不整合で断念）、Win側に`cargo check`を依頼し、**コンパイル成功（エラー0件、新規コード由来の警告もなし）を確認済み**。ただし実機起動してクリックを送り、実際に●が表示されるかの動作確認はまだ（Winユーザーの都合のよい時に依頼予定）。円ではなく正方形の●になっている点は簡略化（意図的、必要なら後でEllipse描画に変更可能）。
 - **Bunランタイムの同梱**: 現状、親機のネットワーク受信は`bun run sidecar/host-server.ts`を開発機にインストール済みの`bun`実行ファイルで起動している。配布時はBunランタイム本体をTauriのリソースとして同梱し、`tauri.conf.json`の`resources`経由で絶対パスを解決する必要がある（`net/server.rs`の`resolve_sidecar_script`は既にdev/packaged両対応のつもりで書いてあるが、Bun本体の同梱は未着手）。
 - **デバッグ用 `/debug/send` エンドポイント**: `sidecar/host-server.ts`に、127.0.0.1限定でクリック/キー配信を直接トリガーできるデバッグ用HTTPエンドポイントを追加した（自動テスト用）。配布前に無効化または削除を検討する。
 - **第2段階（グローバルフック）**: 計画どおり未着手。現状は親機ウィンドウ内の操作パッドのみ。macOS/WindowsそれぞれのCGEventTap/SetWindowsHookExによる実装方針は、設計時の計画ファイル（`NOTES.private.md` 参照）に記載済み。
@@ -31,3 +30,4 @@
 
 - **macOSの`window_rect`がタイトルバーを含む**: `platform/macos.rs`の`list_windows`/`window_rect`は`CGWindowListCopyWindowInfo`の`kCGWindowBounds`（ウィンドウ全体の枠）を使っており、Win側の`GetClientRect`（クライアント領域のみ）と違い、タイトルバー分だけ上端にズレがある。今回の精度検証はWin側のみだったため、mac側のこのズレは未計測。
 - **WindowsのDPI対応**: Per-Monitor-V2 DPI awarenessのmanifest宣言は未確認。高DPI環境・複数モニタでの座標ズレは未検証。
+- **クリック位置の視覚フィードバック、Windows版は正方形**: mac版は円(CSSのradial-gradient)だが、Windows版(`platform/windows.rs`の`show_click_feedback`)は素のWin32レイヤードウィンドウで実装しており、円形クリップ(`SetWindowRgn`等)を入れていないためオレンジ色の塗りつぶし正方形になる。2026-11-04、Win実機でBitBltによる連続撮影・ピクセル差分計測により、クリック位置に約0.35秒表示して消えることを確認済み（中心(1440,830)付近、約28x28pxの正方形）。四隅付近やDPI倍率の影響は未確認。

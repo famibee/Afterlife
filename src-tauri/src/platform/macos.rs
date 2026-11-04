@@ -3,8 +3,10 @@ use core_foundation::base::TCFType;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
+use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 use core_graphics::window::{
-    copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements,
+    copy_window_info, create_image, kCGNullWindowID, kCGWindowImageBoundsIgnoreFraming,
+    kCGWindowLayer, kCGWindowListExcludeDesktopElements, kCGWindowListOptionIncludingWindow,
     kCGWindowListOptionOnScreenOnly, kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
 };
 
@@ -148,4 +150,49 @@ pub fn open_accessibility_settings() {
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
+}
+
+/// 指定ウィンドウの内容をRGBAで取得する（操作パッドのスナップショット表示用）。
+/// Screen Recording権限が必要（未付与の場合は黒画像または取得失敗になりうる）。
+pub fn capture_window_rgba(id: u64) -> Option<(Vec<u8>, u32, u32)> {
+    // CGRectNull相当（origin無限大）を渡すと、kCGWindowListOptionIncludingWindowと
+    // 組み合わせて指定ウィンドウの自然な範囲全体をキャプチャできる。
+    let null_rect = CGRect::new(
+        &CGPoint::new(f64::INFINITY, f64::INFINITY),
+        &CGSize::new(0.0, 0.0),
+    );
+    let image = create_image(
+        null_rect,
+        kCGWindowListOptionIncludingWindow,
+        id as u32,
+        kCGWindowImageBoundsIgnoreFraming,
+    )?;
+
+    let width = image.width() as u32;
+    let height = image.height() as u32;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let bytes_per_row = image.bytes_per_row();
+    let data = image.data();
+    let bytes: &[u8] = data.bytes();
+
+    let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
+    for y in 0..height as usize {
+        let row = y * bytes_per_row;
+        if row + (width as usize) * 4 > bytes.len() {
+            break;
+        }
+        for x in 0..width as usize {
+            let si = row + x * 4;
+            let di = (y * width as usize + x) * 4;
+            // CGWindowListCreateImageの既定出力はBGRA(premultiplied, ネイティブ
+            // バイト順)なので、RGBAへ並べ替える。
+            out[di] = bytes[si + 2];
+            out[di + 1] = bytes[si + 1];
+            out[di + 2] = bytes[si];
+            out[di + 3] = bytes[si + 3];
+        }
+    }
+    Some((out, width, height))
 }

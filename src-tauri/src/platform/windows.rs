@@ -3,7 +3,11 @@ use std::sync::OnceLock;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, CreateSolidBrush};
+use windows::Win32::Graphics::Gdi::{
+    ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
+    DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BI_RGB, DIB_RGB_COLORS,
+};
+use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS, PW_CLIENTONLY};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
 use windows::Win32::System::Threading::{
@@ -18,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW, GW_OWNER, GWL_EXSTYLE, HWND_TOPMOST,
     LWA_ALPHA, MSG, SWP_NOACTIVATE, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, WM_APP, WM_TIMER,
     WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    WS_EX_TRANSPARENT, WS_POPUP, PW_RENDERFULLCONTENT,
 };
 
 use super::WindowInfo;
@@ -309,5 +313,62 @@ pub fn show_click_feedback(x: i32, y: i32) {
             WPARAM((x as u32) as usize),
             LPARAM((y as u32) as isize),
         );
+    }
+}
+
+/// 指定ウィンドウのクライアント領域の内容をRGBAで取得する
+/// （操作パッドのスナップショット表示用）。`PrintWindow`+`PW_RENDERFULLCONTENT`で、
+/// DirectX等で描画されるゲームウィンドウの内容も取得できるようにしている。
+pub fn capture_window_rgba(id: u64) -> Option<(Vec<u8>, u32, u32)> {
+    let hwnd = HWND(id as *mut std::ffi::c_void);
+    unsafe {
+        let mut client = RECT::default();
+        GetClientRect(hwnd, &mut client).ok()?;
+        let width = (client.right - client.left).max(1);
+        let height = (client.bottom - client.top).max(1);
+
+        let window_dc = GetDC(Some(hwnd));
+        if window_dc.is_invalid() {
+            return None;
+        }
+        let mem_dc = CreateCompatibleDC(Some(window_dc));
+        let bitmap = CreateCompatibleBitmap(window_dc, width, height);
+        let old_obj = SelectObject(mem_dc, bitmap.into());
+
+        let flags = PRINT_WINDOW_FLAGS(PW_CLIENTONLY.0 | PW_RENDERFULLCONTENT);
+        let captured = PrintWindow(hwnd, mem_dc, flags).as_bool();
+
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader.biSize = std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height; // 負値でトップダウン(上から下の行順)で取得する
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB.0;
+
+        let mut buf = vec![0u8; (width as usize) * (height as usize) * 4];
+        let lines = GetDIBits(
+            mem_dc,
+            bitmap,
+            0,
+            height as u32,
+            Some(buf.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+
+        SelectObject(mem_dc, old_obj);
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(Some(hwnd), window_dc);
+
+        if !captured || lines == 0 {
+            return None;
+        }
+        // GetDIBitsはBGRA順で返るので、RGBAへ並べ替える。
+        for px in buf.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        Some((buf, width as u32, height as u32))
     }
 }

@@ -12,11 +12,14 @@
     target: string | null;
   };
 
+  type SnapshotPayload = { id: number; data: string };
+
   let clients = $state<ConnectedClient[]>([]);
   let aspect = $state<"16:9" | "4:3">("16:9");
   let flashing = $state(false);
   let padEl: HTMLDivElement;
   let localAddress = $state<string | null>(null);
+  let snapshotUrl = $state<string | null>(null);
 
   const aspectRatio = () => (aspect === "16:9" ? 16 / 9 : 4 / 3);
 
@@ -45,12 +48,18 @@
   }
 
   let unlistenClients: (() => void) | undefined;
+  let unlistenSnapshot: (() => void) | undefined;
 
   onMount(async () => {
     await invoke("start_host");
     localAddress = await invoke<string | null>("host_local_address");
     unlistenClients = await listen<ConnectedClient[]>("host-clients-changed", (event) => {
       clients = event.payload;
+    });
+    // 子機からの定期スナップショット(低頻度の確認用、リアルタイムではない)を
+    // パッドの背景に表示する。複数子機が繋がっている場合は最後に届いたものを使う。
+    unlistenSnapshot = await listen<SnapshotPayload>("host-snapshot", (event) => {
+      snapshotUrl = `data:image/jpeg;base64,${event.payload.data}`;
     });
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -60,6 +69,7 @@
     window.removeEventListener("keydown", handleKeyDown);
     window.removeEventListener("keyup", handleKeyUp);
     unlistenClients?.();
+    unlistenSnapshot?.();
   });
 
   async function back() {
@@ -86,13 +96,17 @@
       <div
         class="pad"
         bind:this={padEl}
-        style="aspect-ratio: {aspectRatio()};"
+        style="aspect-ratio: {aspectRatio()}; {snapshotUrl
+          ? `background-image: url(${snapshotUrl}); background-size: contain; background-position: center; background-repeat: no-repeat;`
+          : ''}"
         onmousedown={handlePadClick}
         oncontextmenu={(e) => e.preventDefault()}
         role="button"
         tabindex="0"
       >
-        <div class="hint">ここをクリック / キー操作すると子機に配信されます</div>
+        {#if !snapshotUrl}
+          <div class="hint">ここをクリック / キー操作すると子機に配信されます</div>
+        {/if}
         {#if flashing}
           <div class="flash"></div>
         {/if}

@@ -205,6 +205,9 @@ async fn handle_client_text(app: &AppHandle, state: &Arc<HostState>, id: u64, da
             }
             emit_clients(app, state).await;
         }
+        Ok(ClientMsg::Snapshot { data }) => {
+            let _ = app.emit("host-snapshot", serde_json::json!({ "id": id, "data": data }));
+        }
         Ok(ClientMsg::Pong) => {}
         Err(e) => {
             eprintln!("[host] client#{id}: failed to parse message: {e} (raw: {data:?})");

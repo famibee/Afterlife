@@ -6,6 +6,7 @@ mod protocol;
 
 use std::sync::{Arc, Mutex as StdMutex};
 
+use base64::Engine;
 use mdns_sd::ServiceDaemon;
 use tauri::{AppHandle, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -181,7 +182,40 @@ async fn client_connect(
         }
     });
     *client.task.lock().await = Some(handle);
+
+    let app_for_snapshot = app.clone();
+    let client_for_snapshot = client.clone();
+    let snapshot_handle = tauri::async_runtime::spawn(async move {
+        run_snapshot_loop(app_for_snapshot, client_for_snapshot).await;
+    });
+    *client.snapshot_task.lock().await = Some(snapshot_handle);
+
     Ok(())
+}
+
+const SNAPSHOT_INTERVAL_SECS: u64 = 2;
+const SNAPSHOT_MAX_WIDTH: u32 = 480;
+const SNAPSHOT_QUALITY: u8 = 40;
+
+/// 操作対象ウィンドウが選ばれている間、定期的にスナップショットを撮って親機へ送る
+/// （親機の操作パッド上に表示するため。リアルタイムではなく低頻度の確認用）。
+async fn run_snapshot_loop(app: AppHandle, client: Arc<ClientState>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(SNAPSHOT_INTERVAL_SECS));
+    loop {
+        interval.tick().await;
+        let target_id = {
+            let state = app.state::<AppState>();
+            state.target.lock().unwrap().as_ref().map(|t| t.0)
+        };
+        let Some(id) = target_id else { continue };
+        let jpeg = tokio::task::spawn_blocking(move || {
+            platform::capture_window_jpeg(id, SNAPSHOT_MAX_WIDTH, SNAPSHOT_QUALITY)
+        })
+        .await;
+        let Ok(Some(jpeg)) = jpeg else { continue };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+        client::send_snapshot(&client, b64).await;
+    }
 }
 
 #[tauri::command]
@@ -330,7 +364,10 @@ fn perform_click(
     if let Some(handle) = saved {
         platform::restore_focus(handle);
     }
-    show_click_feedback(app.clone(), landed.0, landed.1);
+    // クリック位置の視覚フィードバックは一旦無効化（ユーザー指示、2026-11-04）。
+    // 実装自体は残してあるので、復活させる場合は下の行を戻すだけでよい。
+    let _ = (app, landed);
+    // show_click_feedback(app.clone(), landed.0, landed.1);
     Ok(())
 }
 
@@ -340,12 +377,16 @@ fn perform_click(
 /// があるため、WebViewを使わない`platform::show_click_feedback`（素のWin32レイヤード
 /// ウィンドウ）に委譲する。
 #[cfg(not(windows))]
+#[allow(dead_code)]
 const CLICK_FEEDBACK_LABEL: &str = "click-feedback-overlay";
 #[cfg(not(windows))]
+#[allow(dead_code)]
 const CLICK_FEEDBACK_SIZE: i32 = 56;
 #[cfg(not(windows))]
+#[allow(dead_code)]
 const CLICK_FEEDBACK_LIFETIME_MS: u64 = 650;
 
+#[allow(dead_code)]
 fn show_click_feedback(app: AppHandle, x: i32, y: i32) {
     #[cfg(windows)]
     {

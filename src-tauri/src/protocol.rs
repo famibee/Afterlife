@@ -27,6 +27,10 @@ pub enum ClientMsg {
     Status {
         target: Option<String>,
     },
+    /// 操作対象ウィンドウの縮小スナップショット（JPEG、base64）。定期送信する。
+    Snapshot {
+        data: String,
+    },
     Pong,
 }
 

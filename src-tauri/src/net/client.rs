@@ -26,6 +26,8 @@ pub struct ClientState {
     pub status: Mutex<ConnectionStatus>,
     pub writer: Mutex<Option<WsSink>>,
     pub task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// 操作対象ウィンドウのスナップショットを定期送信するタスク。
+    pub snapshot_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl ClientState {
@@ -34,6 +36,7 @@ impl ClientState {
             status: Mutex::new(ConnectionStatus::Disconnected),
             writer: Mutex::new(None),
             task: Mutex::new(None),
+            snapshot_task: Mutex::new(None),
         }
     }
 }
@@ -141,8 +144,21 @@ pub async fn send_status(state: &Arc<ClientState>, target: Option<String>) {
     }
 }
 
+pub async fn send_snapshot(state: &Arc<ClientState>, data: String) {
+    let mut guard = state.writer.lock().await;
+    if let Some(writer) = guard.as_mut() {
+        let msg = ClientMsg::Snapshot { data };
+        if let Ok(payload) = serde_json::to_string(&msg) {
+            let _ = writer.send(Message::Text(payload.into())).await;
+        }
+    }
+}
+
 pub async fn disconnect(app: &AppHandle, state: &Arc<ClientState>) {
     if let Some(task) = state.task.lock().await.take() {
+        task.abort();
+    }
+    if let Some(task) = state.snapshot_task.lock().await.take() {
         task.abort();
     }
     if let Some(mut writer) = state.writer.lock().await.take() {
