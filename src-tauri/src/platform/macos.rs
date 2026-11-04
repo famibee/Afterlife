@@ -12,9 +12,15 @@ use super::WindowInfo;
 
 /// `kCGWindowBounds` の辞書表現（CGRectMakeWithDictionaryRepresentation準拠）から矩形を取り出す。
 fn parse_bounds(dict: &CFDictionary) -> Option<(i32, i32, i32, i32)> {
+    // kCGWindowBoundsの値はウィンドウ辞書のトップレベルではなく、X/Y/Width/Heightを
+    // 持つ入れ子の辞書なので、まずそのサブ辞書を取り出す必要がある。
+    let bounds_key = CFString::new("kCGWindowBounds");
+    let bounds_value = dict.find(bounds_key.as_concrete_TypeRef() as *const _)?;
+    let bounds_dict = unsafe { core_foundation::base::CFType::wrap_under_get_rule(*bounds_value as _) }
+        .downcast::<CFDictionary>()?;
     let get_num = |key: &str| -> Option<f64> {
         let cf_key = CFString::new(key);
-        let value = dict.find(cf_key.as_concrete_TypeRef() as *const _)?;
+        let value = bounds_dict.find(cf_key.as_concrete_TypeRef() as *const _)?;
         let ty = unsafe { core_foundation::base::CFType::wrap_under_get_rule(*value as _) };
         ty.downcast::<CFNumber>()?.to_f64()
     };

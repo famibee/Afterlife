@@ -5,7 +5,7 @@
 ## 動作未確認・要検証
 
 - **右クリック・ドラッグ・キー入力の配信**: クリック(左)と座標変換精度はmac↔Win実機間で確認済みだが、右クリック・ドラッグ・キー入力はまだ試していない。
-- **macOS側でのクリック精度**: 今回の実機検証はWin側（子機）でのみ実施。mac側が子機になった場合の精度・フォーカス復帰は未検証。
+- **macOS側でのクリック精度**: mac自身をホストにしたmac→mac自己テストでは、クリック着弾・視覚フィードバック表示を確認済み（2026-11-04）。Win側を親機にした「Win→mac」方向の実機確認は依頼中・回答待ち。
 - **mDNS発見がIPv4ではなくIPv6リンクローカルのみを返すことがある**: 2026-11-04の検証で、mac側ホストの`enable_addr_auto()`がIPv4アドレスを含まず、Win側の発見結果が`fe80::...%11`のIPv6リンクローカルのみだった（原因未調査）。クライアント側の`preferredAddress`はIPv4を優先するが、IPv4自体が無ければIPv6にフォールバックする。クライアント側URL構築の「invalid authority」クラッシュ（ゾーンID付きIPv6を`[]`で囲まずURLに入れていた）は`net/client.rs`の`format_ws_host`で修正済み（ゾーンIDは破棄するので、リンクローカルIPv6自体はルーティングできずクラッシュしないだけ）。恒久対応は親機側で確実にIPv4を広告すること。
 
 ## 未解決バグ
@@ -14,7 +14,7 @@
 
 ## 未実装・設計検討
 
-- **クリック位置の視覚フィードバック**: mac側は実装済み（`src-tauri/src/lib.rs`の`show_click_feedback`、`static/click-feedback.html`。クリック着弾位置に別ウィンドウで●を表示しCSSアニメーションでフェードアウト）。dev起動して落ちないことのみ確認、実機でのクリック注入を伴う目視確認は未実施。Windowsは既知のWebView2デッドロック問題（`client_show_highlight`と同じ理由）により無効化したままなので、ネイティブな非WebView実装への置き換えが別途必要。
+- **クリック位置の視覚フィードバック**: mac側は実装・動作確認済み（`src-tauri/src/lib.rs`の`show_click_feedback`、`static/click-feedback.html`。クリック着弾位置に別ウィンドウで●を表示しCSSアニメーションでフェードアウト）。2026-11-04、mac自身をホストにした自己テスト(mac→mac)でTextEditドキュメント中央への着弾と●の表示をスクリーンショットで確認済み。検証の過程で、`platform/macos.rs`の`parse_bounds`が`kCGWindowBounds`の値を直接のキー(X/Y/Width/Height)として辞書のトップレベルから探していたバグ(実際は`kCGWindowBounds`キーの値自体がX/Y/Width/Heightを持つ入れ子の辞書)を発見・修正した。このバグにより、macが子機になる場合は`list_windows`/`window_rect`が常に失敗しており、クリック注入自体が機能しない状態だった（Win側検証では一度も踏んでいなかった）。Windowsは既知のWebView2デッドロック問題（`client_show_highlight`と同じ理由）により無効化したままなので、ネイティブな非WebView実装への置き換えが別途必要。
   - 設計調査(2026-11-04、ユーザー依頼によるweb検索): MIT公開されているMicrosoft PowerToysの「Mouse Highlighter」「Find My Mouse」(`MouseHighlighter.cpp`/`FindMyMouse.cpp`)が同種の機能を実装済み。専用のWin32ウィンドウクラスを登録した透明・レイヤードなオーバーレイウィンドウを作り、グローバルマウスフックで座標を取得して最前面に描画している。WebViewは使わず素のWin32ウィンドウ+GDI/Composition描画。定石は`WS_EX_LAYERED | WS_EX_TRANSPARENT`でクリックスルー、`WS_EX_NOACTIVATE`+`SetWindowPos`の`SWP_NOACTIVATE`でフォーカスを奪わない。この構成ならTauriの2枚目WebView2デッドロックを根本的に回避できる。Windows側実装時はこの方針（既存依存の`windows`クレートで`CreateWindowExW`/`SetLayeredWindowAttributes`等）を採用する。Barrier/Synergyは参考にならない（疑似カーソルではなく実カーソルを移動する方式）。
 - **Bunランタイムの同梱**: 現状、親機のネットワーク受信は`bun run sidecar/host-server.ts`を開発機にインストール済みの`bun`実行ファイルで起動している。配布時はBunランタイム本体をTauriのリソースとして同梱し、`tauri.conf.json`の`resources`経由で絶対パスを解決する必要がある（`net/server.rs`の`resolve_sidecar_script`は既にdev/packaged両対応のつもりで書いてあるが、Bun本体の同梱は未着手）。
 - **デバッグ用 `/debug/send` エンドポイント**: `sidecar/host-server.ts`に、127.0.0.1限定でクリック/キー配信を直接トリガーできるデバッグ用HTTPエンドポイントを追加した（自動テスト用）。配布前に無効化または削除を検討する。
