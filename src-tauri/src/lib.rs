@@ -335,17 +335,22 @@ fn perform_click(
 }
 
 /// クリックの着弾位置に、一瞬表示してフェードアウトする●を出す視覚フィードバック。
-/// Windowsでは、メインスレッド上で2つ目のWebView2を同期生成するとデッドロックする
-/// 既知の問題（`client_show_highlight`と同じ）があるため、ネイティブな非WebView実装に
-/// 置き換えるまで無効化する。
+/// macOSはTauriの別WebviewWindowで実装。Windowsは、メインスレッド上で2つ目の
+/// WebView2を同期生成するとデッドロックする既知の問題（`client_show_highlight`と同じ）
+/// があるため、WebViewを使わない`platform::show_click_feedback`（素のWin32レイヤード
+/// ウィンドウ）に委譲する。
+#[cfg(not(windows))]
 const CLICK_FEEDBACK_LABEL: &str = "click-feedback-overlay";
+#[cfg(not(windows))]
 const CLICK_FEEDBACK_SIZE: i32 = 56;
+#[cfg(not(windows))]
 const CLICK_FEEDBACK_LIFETIME_MS: u64 = 650;
 
 fn show_click_feedback(app: AppHandle, x: i32, y: i32) {
     #[cfg(windows)]
     {
-        let _ = (app, x, y);
+        let _ = app;
+        platform::show_click_feedback(x, y);
         return;
     }
     #[cfg(not(windows))]

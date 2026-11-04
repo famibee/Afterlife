@@ -85,3 +85,11 @@ pub fn open_permission_settings() {
 }
 #[cfg(windows)]
 pub fn open_permission_settings() {}
+
+/// クリック着弾位置(絶対スクリーン座標)に、一瞬表示してフェードアウトする視覚フィードバックを
+/// 出す。Windowsのみ実装（素のWin32レイヤードウィンドウ。WebViewは使わない）。
+/// macOSはTauriのWebviewWindowで`lib.rs`側が直接処理している。
+#[cfg(windows)]
+pub fn show_click_feedback(x: i32, y: i32) {
+    windows::show_click_feedback(x, y);
+}
