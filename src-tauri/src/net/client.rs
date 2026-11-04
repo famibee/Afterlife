@@ -43,6 +43,21 @@ async fn set_status(app: &AppHandle, state: &Arc<ClientState>, status: Connectio
     let _ = app.emit("client-connection-changed", status);
 }
 
+/// WebSocket URLのホスト部分を整形する。mDNS発見結果がIPv6リンクローカル
+/// (`fe80::...%11`のようにゾーンID付き)の場合、`[]`で囲まずゾーンID付きのまま
+/// URLに入れると`invalid authority`でパースに失敗する。ゾーンIDはURL経由では
+/// 経路情報として使えないため落とし、アドレス自体は`[]`で囲む。
+fn format_ws_host(host: &str) -> String {
+    if host.starts_with('[') {
+        return host.to_string();
+    }
+    if host.contains(':') {
+        let addr = host.split('%').next().unwrap_or(host);
+        return format!("[{addr}]");
+    }
+    host.to_string()
+}
+
 pub async fn connect_and_run(
     app: AppHandle,
     state: Arc<ClientState>,
@@ -50,7 +65,7 @@ pub async fn connect_and_run(
     port: u16,
     name: String,
 ) -> Result<(), String> {
-    let url = format!("ws://{host}:{port}/");
+    let url = format!("ws://{}:{port}/", format_ws_host(&host));
     eprintln!("[client] connecting to {url}...");
     set_status(&app, &state, ConnectionStatus::Connecting).await;
 

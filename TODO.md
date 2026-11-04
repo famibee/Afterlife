@@ -6,8 +6,7 @@
 
 - **右クリック・ドラッグ・キー入力の配信**: クリック(左)と座標変換精度はmac↔Win実機間で確認済みだが、右クリック・ドラッグ・キー入力はまだ試していない。
 - **macOS側でのクリック精度**: 今回の実機検証はWin側（子機）でのみ実施。mac側が子機になった場合の精度・フォーカス復帰は未検証。
-- **Win側のmDNS残骸**: `stop_host`で`ServiceDaemon::shutdown()`を呼ぶよう修正済み（直らない原因はdropのみで goodbye パケットが送られないことだった）。Win側が修正版を同期・再ビルドした後、実際に残骸（旧インスタンス名が一覧に残り続ける現象）が解消するか未確認（2026-11-04、Win側セッションへ確認依頼済み・回答待ち）。
-- **bunサイドカーなし直接TCP listen版**: Avastの「webガード」をOFFにした状態で、未署名Rustバイナリが直接listenしてもブロックされないか試す（ユーザー2026-11-04発見）。`AFTERLIFE_DIRECT_NET=1`環境変数で`server::start_direct`（Bunサイドカーを介さず`net/server.rs`内で直接`TcpListener`+`tokio-tungstenite`でlisten）に切り替えられる実装済み。実機での動作確認は未実施。通れば後述の「Bunランタイムの同梱」作業は不要になる。
+- **mDNS発見がIPv4ではなくIPv6リンクローカルのみを返すことがある**: 2026-11-04の検証で、mac側ホストの`enable_addr_auto()`がIPv4アドレスを含まず、Win側の発見結果が`fe80::...%11`のIPv6リンクローカルのみだった（原因未調査）。クライアント側の`preferredAddress`はIPv4を優先するが、IPv4自体が無ければIPv6にフォールバックする。クライアント側URL構築の「invalid authority」クラッシュ（ゾーンID付きIPv6を`[]`で囲まずURLに入れていた）は`net/client.rs`の`format_ws_host`で修正済み（ゾーンIDは破棄するので、リンクローカルIPv6自体はルーティングできずクラッシュしないだけ）。恒久対応は親機側で確実にIPv4を広告すること。
 
 ## 未解決バグ
 
@@ -16,6 +15,7 @@
 ## 未実装・設計検討
 
 - **クリック位置の視覚フィードバック**: mac側は実装済み（`src-tauri/src/lib.rs`の`show_click_feedback`、`static/click-feedback.html`。クリック着弾位置に別ウィンドウで●を表示しCSSアニメーションでフェードアウト）。dev起動して落ちないことのみ確認、実機でのクリック注入を伴う目視確認は未実施。Windowsは既知のWebView2デッドロック問題（`client_show_highlight`と同じ理由）により無効化したままなので、ネイティブな非WebView実装への置き換えが別途必要。
+  - 設計調査(2026-11-04、ユーザー依頼によるweb検索): MIT公開されているMicrosoft PowerToysの「Mouse Highlighter」「Find My Mouse」(`MouseHighlighter.cpp`/`FindMyMouse.cpp`)が同種の機能を実装済み。専用のWin32ウィンドウクラスを登録した透明・レイヤードなオーバーレイウィンドウを作り、グローバルマウスフックで座標を取得して最前面に描画している。WebViewは使わず素のWin32ウィンドウ+GDI/Composition描画。定石は`WS_EX_LAYERED | WS_EX_TRANSPARENT`でクリックスルー、`WS_EX_NOACTIVATE`+`SetWindowPos`の`SWP_NOACTIVATE`でフォーカスを奪わない。この構成ならTauriの2枚目WebView2デッドロックを根本的に回避できる。Windows側実装時はこの方針（既存依存の`windows`クレートで`CreateWindowExW`/`SetLayeredWindowAttributes`等）を採用する。Barrier/Synergyは参考にならない（疑似カーソルではなく実カーソルを移動する方式）。
 - **Bunランタイムの同梱**: 現状、親機のネットワーク受信は`bun run sidecar/host-server.ts`を開発機にインストール済みの`bun`実行ファイルで起動している。配布時はBunランタイム本体をTauriのリソースとして同梱し、`tauri.conf.json`の`resources`経由で絶対パスを解決する必要がある（`net/server.rs`の`resolve_sidecar_script`は既にdev/packaged両対応のつもりで書いてあるが、Bun本体の同梱は未着手）。
 - **デバッグ用 `/debug/send` エンドポイント**: `sidecar/host-server.ts`に、127.0.0.1限定でクリック/キー配信を直接トリガーできるデバッグ用HTTPエンドポイントを追加した（自動テスト用）。配布前に無効化または削除を検討する。
 - **第2段階（グローバルフック）**: 計画どおり未着手。現状は親機ウィンドウ内の操作パッドのみ。macOS/WindowsそれぞれのCGEventTap/SetWindowsHookExによる実装方針は、設計時の計画ファイル（`NOTES.private.md` 参照）に記載済み。
