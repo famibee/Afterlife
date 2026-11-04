@@ -49,5 +49,11 @@ pub enum ServerMsg {
         code: String,
         direction: KeyDirection,
     },
+    /// いずれかの子機が報告した操作対象アプリ名。他の子機（既に接続中・これから
+    /// 接続する分とも）へ自動設定のヒントとして配る。子機は自分の対象が未設定、
+    /// またはこの名前と異なる場合のみウィンドウ一覧から探して自動選択する。
+    TargetHint {
+        app_name: String,
+    },
     Ping,
 }

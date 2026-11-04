@@ -29,6 +29,9 @@ pub struct HostState {
     pub mdns: Mutex<Option<ServiceDaemon>>,
     pub sidecar: Mutex<Option<SidecarHandle>>,
     pub direct: Mutex<Option<DirectHandle>>,
+    /// いずれかの子機から最後に報告された操作対象アプリ名。新規接続した子機や、
+    /// 既に繋がっている他の子機への自動設定のヒントとして使う。
+    pub known_target: Mutex<Option<String>>,
 }
 
 pub struct SidecarHandle {
@@ -50,6 +53,7 @@ impl HostState {
             mdns: Mutex::new(None),
             sidecar: Mutex::new(None),
             direct: Mutex::new(None),
+            known_target: Mutex::new(None),
         }
     }
 
@@ -198,12 +202,28 @@ async fn handle_client_text(app: &AppHandle, state: &Arc<HostState>, id: u64, da
                 },
             );
             emit_clients(app, state).await;
+            // 既に他の子機から対象アプリ名が分かっていれば、新規接続した子機にも
+            // ヒントとして配る（自動設定）。既に合わせている子機は無視するだけなので
+            // 全体ブロードキャストで構わない。
+            if let Some(name) = state.known_target.lock().await.clone() {
+                state.send(ServerMsg::TargetHint { app_name: name });
+            }
         }
         Ok(ClientMsg::Status { target }) => {
             if let Some(c) = state.clients.lock().await.get_mut(&id) {
-                c.target = target;
+                c.target = target.clone();
             }
             emit_clients(app, state).await;
+            // 新しいアプリ名が報告されたときだけブロードキャストする
+            // （同じ名前の再報告で永遠に配り合う「ハウリング」を防ぐ）。
+            if let Some(name) = target {
+                let mut known = state.known_target.lock().await;
+                if known.as_deref() != Some(name.as_str()) {
+                    *known = Some(name.clone());
+                    drop(known);
+                    state.send(ServerMsg::TargetHint { app_name: name });
+                }
+            }
         }
         Ok(ClientMsg::Snapshot { data }) => {
             let _ = app.emit("host-snapshot", serde_json::json!({ "id": id, "data": data }));
@@ -312,6 +332,7 @@ pub async fn stop_direct(state: &Arc<HostState>) {
         handle.accept_task.abort();
     }
     state.clients.lock().await.clear();
+    *state.known_target.lock().await = None;
 }
 
 async fn emit_clients(app: &AppHandle, state: &Arc<HostState>) {
@@ -326,4 +347,5 @@ pub async fn stop_sidecar(state: &Arc<HostState>) {
         let _ = handle.child.kill().await;
     }
     state.clients.lock().await.clear();
+    *state.known_target.lock().await = None;
 }

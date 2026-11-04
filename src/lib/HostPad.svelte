@@ -15,13 +15,12 @@
   type SnapshotPayload = { id: number; data: string };
 
   let clients = $state<ConnectedClient[]>([]);
-  let aspect = $state<"16:9" | "4:3">("16:9");
   let flashing = $state(false);
   let padEl: HTMLDivElement;
   let localAddress = $state<string | null>(null);
   let snapshotUrl = $state<string | null>(null);
-
-  const aspectRatio = () => (aspect === "16:9" ? 16 / 9 : 4 / 3);
+  // スナップショット到着前のデフォルト。届き次第、画像の実寸に合わせて更新する。
+  let padAspect = $state(16 / 9);
 
   function flash() {
     flashing = true;
@@ -59,7 +58,17 @@
     // 子機からの定期スナップショット(低頻度の確認用、リアルタイムではない)を
     // パッドの背景に表示する。複数子機が繋がっている場合は最後に届いたものを使う。
     unlistenSnapshot = await listen<SnapshotPayload>("host-snapshot", (event) => {
-      snapshotUrl = `data:image/jpeg;base64,${event.payload.data}`;
+      const url = `data:image/jpeg;base64,${event.payload.data}`;
+      snapshotUrl = url;
+      // パッドの画面比を、スナップショットの実寸に合わせて自動調整する
+      // （固定サイズ運用の操作対象アプリなら、初回到着分でほぼ決まる）。
+      const img = new Image();
+      img.onload = () => {
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          padAspect = img.naturalWidth / img.naturalHeight;
+        }
+      };
+      img.src = url;
     });
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -85,10 +94,6 @@
     {#if localAddress}
       <span class="address">{localAddress}</span>
     {/if}
-    <select bind:value={aspect}>
-      <option value="16:9">16:9</option>
-      <option value="4:3">4:3</option>
-    </select>
   </header>
 
   <div class="layout">
@@ -96,7 +101,7 @@
       <div
         class="pad"
         bind:this={padEl}
-        style="aspect-ratio: {aspectRatio()}; {snapshotUrl
+        style="aspect-ratio: {padAspect}; {snapshotUrl
           ? `background-image: url(${snapshotUrl}); background-size: contain; background-position: center; background-repeat: no-repeat;`
           : ''}"
         onmousedown={handlePadClick}

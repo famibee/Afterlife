@@ -31,6 +31,7 @@
   let testResult = $state("");
 
   let unlistenFns: Array<() => void> = [];
+  let autoConnectAttempted = false;
 
   async function checkPermission() {
     hasPermission = await invoke<boolean>("client_check_permission");
@@ -81,6 +82,12 @@
         if (!discovered.some((d) => d.fullname === e.payload.fullname)) {
           discovered = [...discovered, e.payload];
         }
+        // 起動時に親機が見つかれば自動で接続する（親機の複数起動は運用上想定しない
+        // ので、最初に見つかった1台にだけ繋ぐ）。
+        if (!autoConnectAttempted && status === "disconnected") {
+          autoConnectAttempted = true;
+          connectTo(preferredAddress(e.payload), e.payload.port);
+        }
       }),
     );
     unlistenFns.push(
@@ -91,6 +98,12 @@
     unlistenFns.push(
       await listen<ConnectionStatus>("client-connection-changed", (e) => {
         status = e.payload;
+      }),
+    );
+    // 親機からの自動設定ヒントでウィンドウが自動選択されたときも、UIに反映する
+    unlistenFns.push(
+      await listen<WindowInfo>("client-target-auto-selected", (e) => {
+        target = e.payload;
       }),
     );
   });

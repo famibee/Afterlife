@@ -1,0 +1,11 @@
+(?d).git
+(?d).claude/settings.local.json
+(?d)node_modules
+(?d)src-tauri/target
+(?d)no_sync
+(?d).DS_Store
+(?d)Thumbs.db
+(?d)Desktop.ini
+(?d).Spotlight-V100
+(?d).TemporaryItems
+bun.lock

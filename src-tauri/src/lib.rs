@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use base64::Engine;
 use mdns_sd::ServiceDaemon;
-use tauri::{AppHandle, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use net::client::{self, ClientState, ConnectionStatus};
 use net::discovery;
@@ -445,7 +445,48 @@ fn show_click_feedback(app: AppHandle, x: i32, y: i32) {
     }
 }
 
+/// アプリ名の表記ゆれ（大文字小文字、Windowsの`.exe`拡張子、macOSの`.app`拡張子）を
+/// 吸収して比較する。自動設定のヒントを、クロスプラットフォームの子機間でも
+/// 大まかに一致させるため。
+fn app_names_match(a: &str, b: &str) -> bool {
+    fn normalize(s: &str) -> String {
+        s.trim_end_matches(".exe").trim_end_matches(".app").to_lowercase()
+    }
+    normalize(a) == normalize(b)
+}
+
+/// 親機から配られた対象アプリ名のヒントを受けて、自分のウィンドウ一覧から
+/// 一致するものを自動選択する。既に同じアプリに合わせていれば何もしない
+/// （親機への再報告でヒントが無限に配られ続ける「ハウリング」を防ぐ）。
+fn auto_select_target(app: &AppHandle, state: &tauri::State<'_, AppState>, hint_name: &str) {
+    let current_name = state.target.lock().unwrap().as_ref().map(|t| t.2.clone());
+    if let Some(current_name) = &current_name {
+        if app_names_match(current_name, hint_name) {
+            return;
+        }
+    }
+    let Some(win) = platform::list_windows()
+        .into_iter()
+        .find(|w| app_names_match(&w.app_name, hint_name))
+    else {
+        return;
+    };
+    *state.target.lock().unwrap() = Some((win.id, win.pid, win.app_name.clone()));
+    eprintln!("[client] auto-selected target from hint: {}", win.app_name);
+    // フロントエンド（ウィンドウ一覧の「選択中」表示）にも反映させる。
+    let _ = app.emit("client-target-auto-selected", &win);
+    let client = state.client.clone();
+    let app_name = win.app_name;
+    tauri::async_runtime::spawn(async move {
+        client::send_status(&client, Some(app_name)).await;
+    });
+}
+
 fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: ServerMsg) {
+    if let ServerMsg::TargetHint { app_name } = &msg {
+        auto_select_target(app, state, app_name);
+        return;
+    }
     let target_id = state.target.lock().unwrap().as_ref().map(|t| t.0);
     let Some(id) = target_id else { return };
     match msg {
@@ -460,7 +501,7 @@ fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: S
                 let _ = injector.key(&code, direction);
             }
         }
-        ServerMsg::Ping => {}
+        ServerMsg::Ping | ServerMsg::TargetHint { .. } => {}
     }
 }
 
