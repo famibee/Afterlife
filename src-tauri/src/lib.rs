@@ -496,9 +496,27 @@ fn handle_server_msg(app: &AppHandle, state: &tauri::State<'_, AppState>, msg: S
             }
         }
         ServerMsg::Key { code, direction } => {
+            // クリックと違い、キー入力は対象を前面化したままにする(離す操作も
+            // 同じウィンドウへ送るため)。元のウィンドウへは戻さない。
+            let target_pid = state.target.lock().unwrap().as_ref().map(|t| t.1);
+            if let Some(pid) = target_pid {
+                let activated = platform::activate_window(id, pid);
+                let front = platform::frontmost_window();
+                eprintln!(
+                    "[client] key diag: target id={id} pid={pid}, activate_window -> {activated}, frontmost_after={front:?} (matches target: {})",
+                    front == Some(id)
+                );
+            } else {
+                eprintln!("[client] key diag: no target pid set, skipping activate_window");
+            }
             let guard = state.injector.lock().unwrap();
             if let Some(injector) = guard.as_ref() {
-                let _ = injector.key(&code, direction);
+                match injector.key(&code, direction) {
+                    Ok(()) => eprintln!("[client] key diag: inject {code:?} {direction:?} OK"),
+                    Err(e) => eprintln!("[client] key diag: inject {code:?} {direction:?} FAILED: {e:?}"),
+                }
+            } else {
+                eprintln!("[client] key diag: no injector available");
             }
         }
         ServerMsg::Ping | ServerMsg::TargetHint { .. } => {}
