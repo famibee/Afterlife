@@ -5,8 +5,7 @@ const $ = (id) => document.getElementById(id);
 let role = null;
 let target = null;
 let sent = 0; // 親機が配った連番の最新
-let applied = 0; // この機器が最後に処理した連番
-let missed = 0; // 子機が受け取れなかった操作の数
+let stats = { ok: 0, fail: 0, missed: 0, first_fail_seq: null }; // この機器の累積（数え直すまで保持）
 let wantedTarget = null; // 起動オプションで指定されたアプリ名
 
 function el(tag, text, className) {
@@ -16,13 +15,19 @@ function el(tag, text, className) {
   return node;
 }
 
+function statsText(s) {
+  let text = `成功 ${s.ok} 手`;
+  if (s.fail) text += `・失敗 ${s.fail} 手（${s.first_fail_seq} 手目から）`;
+  if (s.missed) text += `・取りこぼし ${s.missed} 手`;
+  return text;
+}
+
 function showStatus(error) {
   const status = $("status");
-  let text = `適用済み ${applied} 手`;
-  if (missed) text += `（${missed} 手を取りこぼしました）`;
-  if (error) text += ` — ${error}`;
+  let text = statsText(stats);
+  if (error) text += ` — 直近: ${error}`;
   status.textContent = text;
-  status.classList.toggle("error", Boolean(error) || missed > 0);
+  status.classList.toggle("error", stats.fail > 0 || stats.missed > 0);
 }
 
 async function checkPermission() {
@@ -82,9 +87,9 @@ async function sendKey(code) {
   if (!target) showSent();
 }
 
-// 親機が操作専用のときは注入結果が来ないので、配った数をそのまま表示する
+// 親機が操作専用（対象ウィンドウ未選択）のときは注入結果が来ないので、配った数をそのまま表示する
 function showSent() {
-  applied = sent;
+  stats = { ...stats, ok: sent };
   showStatus(null);
 }
 
@@ -94,9 +99,8 @@ function renderClients(clients) {
     ...clients.map((c) => {
       const li = document.createElement("li");
       li.append(el("span", `${c.name} (${c.os})`));
-      if (c.error) li.append(el("span", c.error, "error"));
-      else if (c.seq < sent) li.append(el("span", `${sent - c.seq} 手遅れ`, "error"));
-      li.append(el("span", `${c.seq} 手`, "muted"));
+      const delay = sent - c.seq;
+      li.append(el("span", statsText(c) + (delay > 0 ? `・受信待ち ${delay} 手` : ""), c.fail || c.missed ? "error" : "muted"));
       return li;
     }),
   );
@@ -118,6 +122,11 @@ async function startHost(autosend) {
   const checkLag = () => {
     clearTimeout(lagTimer);
     lagTimer = setTimeout(() => renderClients(clients), 1500);
+  };
+
+  $("reset").onclick = () => {
+    sent = 0;
+    invoke("host_reset");
   };
 
   const pad = $("pad");
@@ -185,12 +194,13 @@ async function start(chosen, config = {}) {
   $("main").hidden = false;
 
   await listen("applied", (e) => {
-    const { seq, error } = e.payload;
-    // 連番が飛んでいたら、その分は届かなかった操作（親機の再起動で連番が戻った場合は数え直す）
-    if (role === "client" && applied > 0 && seq > applied + 1) missed += seq - applied - 1;
-    if (seq < applied) missed = 0;
-    applied = seq;
+    const { error, stats: s } = e.payload;
+    stats = s;
     showStatus(error);
+  });
+  await listen("stats", (e) => {
+    stats = e.payload;
+    showStatus(null);
   });
 
   $("perm-open").onclick = () => invoke("open_permission_settings");

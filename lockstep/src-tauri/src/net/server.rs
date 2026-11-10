@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
@@ -10,6 +11,11 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::protocol::{ClientMsg, PORT, ServerMsg};
 
+/// この間隔で生死確認を送る
+const PING_INTERVAL: Duration = Duration::from_secs(5);
+/// この間 Pong が無ければ死んでいるとみなして切る（子機が繋ぎ直す）
+const PONG_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ClientInfo {
     pub id: u64,
@@ -17,7 +23,10 @@ pub struct ClientInfo {
     pub os: String,
     /// 最後に適用結果が届いた連番
     pub seq: u32,
-    pub error: Option<String>,
+    pub ok: u32,
+    pub fail: u32,
+    pub missed: u32,
+    pub first_fail_seq: Option<u32>,
 }
 
 pub struct Host {
@@ -35,6 +44,22 @@ impl Host {
         let mut list: Vec<ClientInfo> = self.clients.lock().unwrap().values().cloned().collect();
         list.sort_by_key(|c| c.id);
         let _ = app.emit("clients", list);
+    }
+
+    /// 全子機の集計表示をクリアする（Reset配布と対にして呼ぶ。実際の値は
+    /// 各子機からの次の Status で上書きされるが、古い値を残さないための即時反映）。
+    pub fn reset_clients(&self, app: &AppHandle) {
+        {
+            let mut clients = self.clients.lock().unwrap();
+            for c in clients.values_mut() {
+                c.seq = 0;
+                c.ok = 0;
+                c.fail = 0;
+                c.missed = 0;
+                c.first_fail_seq = None;
+            }
+        }
+        self.emit_clients(app);
     }
 }
 
@@ -56,9 +81,21 @@ async fn serve(app: AppHandle, host: Arc<Host>, stream: TcpStream, id: u64) {
     };
     let (mut sink, mut stream) = ws.split();
     let mut rx = host.tx.subscribe();
+    let mut ping_timer = tokio::time::interval(PING_INTERVAL);
+    ping_timer.tick().await; // 最初のtickは即座に来るので読み捨てる
+    let mut last_pong = Instant::now();
 
     loop {
         tokio::select! {
+            _ = ping_timer.tick() => {
+                if last_pong.elapsed() > PONG_TIMEOUT {
+                    break;
+                }
+                let Ok(text) = serde_json::to_string(&ServerMsg::Ping) else { continue };
+                if sink.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
             out = rx.recv() => match out {
                 Ok(msg) => {
                     let Ok(text) = serde_json::to_string(&msg) else { continue };
@@ -72,8 +109,10 @@ async fn serve(app: AppHandle, host: Arc<Host>, stream: TcpStream, id: u64) {
             },
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
-                    if let Ok(msg) = serde_json::from_str::<ClientMsg>(&text) {
-                        handle(&app, &host, id, msg);
+                    match serde_json::from_str::<ClientMsg>(&text) {
+                        Ok(ClientMsg::Pong) => last_pong = Instant::now(),
+                        Ok(msg) => handle(&app, &host, id, msg),
+                        Err(_) => {}
                     }
                 }
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
@@ -91,14 +130,21 @@ fn handle(app: &AppHandle, host: &Host, id: u64, msg: ClientMsg) {
         let mut clients = host.clients.lock().unwrap();
         match msg {
             ClientMsg::Hello { name, os } => {
-                clients.insert(id, ClientInfo { id, name, os, seq: 0, error: None });
+                clients.insert(
+                    id,
+                    ClientInfo { id, name, os, seq: 0, ok: 0, fail: 0, missed: 0, first_fail_seq: None },
+                );
             }
-            ClientMsg::Result { seq, error } => {
+            ClientMsg::Status { seq, ok, fail, missed, first_fail_seq } => {
                 if let Some(c) = clients.get_mut(&id) {
                     c.seq = seq;
-                    c.error = error;
+                    c.ok = ok;
+                    c.fail = fail;
+                    c.missed = missed;
+                    c.first_fail_seq = first_fail_seq;
                 }
             }
+            ClientMsg::Pong => {}
         }
     }
     host.emit_clients(app);

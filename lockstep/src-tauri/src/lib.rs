@@ -3,6 +3,7 @@ mod local;
 mod net;
 mod platform;
 mod protocol;
+mod stats;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -17,6 +18,7 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use net::server::Host;
 use platform::WindowInfo;
 use protocol::{ClientMsg, MouseButton, PORT, ServerMsg};
+use stats::Stats;
 
 /// 親機で前面をゲームへ移した後、Lockstepへ戻すまでの猶予（注入したキーをゲームが受け取る時間）
 const REFOCUS_DELAY: Duration = Duration::from_millis(80);
@@ -113,6 +115,15 @@ fn host_key(state: tauri::State<'_, AppState>, code: String) -> u32 {
     host_send(&state, |seq| ServerMsg::Key { seq, code })
 }
 
+/// 全機（親機自身も含む）の成功・失敗・取りこぼしの集計をクリアし、連番を1から数え直す。
+#[tauri::command]
+fn host_reset(app: AppHandle, state: tauri::State<'_, AppState>) {
+    state.seq.store(0, Ordering::SeqCst);
+    let _ = state.host.tx.send(ServerMsg::Reset);
+    let _ = state.jobs.lock().unwrap().send(ServerMsg::Reset);
+    state.host.reset_clients(&app);
+}
+
 #[tauri::command]
 fn client_connect(app: AppHandle, state: tauri::State<'_, AppState>, host: String) {
     let mut task = state.client_task.lock().unwrap();
@@ -128,28 +139,67 @@ fn client_connect(app: AppHandle, state: tauri::State<'_, AppState>, host: Strin
     *task = Some(tauri::async_runtime::spawn(net::client::run(app, host.trim().into(), name, jobs, rx)));
 }
 
+fn send_status(state: &tauri::State<'_, AppState>, seq: u32, stats: &Stats) {
+    if let Some(out) = state.client_out.lock().unwrap().as_ref() {
+        let _ = out.send(ClientMsg::Status {
+            seq,
+            ok: stats.ok,
+            fail: stats.fail,
+            missed: stats.missed,
+            first_fail_seq: stats.first_fail_seq,
+        });
+    }
+}
+
 /// 操作を1件ずつ順に適用する専用スレッド。前面化の待ちでUIや通信を止めないために分けている。
 fn run_injector(app: AppHandle, jobs: Receiver<ServerMsg>) {
     let mut injector = None;
+    let mut stats = Stats::new();
     for msg in jobs {
         let state = app.state::<AppState>();
         let is_host = state.is_host.load(Ordering::SeqCst);
-        let target = state.target.lock().unwrap().clone();
+
+        if matches!(msg, ServerMsg::Reset) {
+            stats.reset();
+            let _ = app.emit("stats", &stats);
+            if !is_host {
+                send_status(&state, 0, &stats);
+            }
+            continue;
+        }
+        if matches!(msg, ServerMsg::Ping) {
+            continue;
+        }
+
+        let mut target = state.target.lock().unwrap().clone();
         // 親機は対象を選ばなければ操作パッド専用として動く
         if is_host && target.is_none() {
             continue;
         }
-        let result = local::apply(&mut injector, target.as_ref(), &msg);
-        if is_host && result == Ok(true) {
+        let seq = msg.seq().unwrap_or(0);
+        let mut result = local::apply(&mut injector, target.as_ref(), &msg);
+        // 対象ウィンドウが消えている（再起動・フルスクリーン切替等でIDが変わった）場合は、
+        // 同じアプリ名で探し直してから一度だけ再試行する
+        if matches!(result, Err(local::Failure::WindowGone))
+            && let Some(t) = &target
+            && let Some(found) =
+                platform::list_windows().into_iter().find(|w| w.app_name == t.app_name)
+        {
+            *state.target.lock().unwrap() = Some(found.clone());
+            target = Some(found);
+            result = local::apply(&mut injector, target.as_ref(), &msg);
+        }
+        if is_host && matches!(result, Ok(true)) {
             std::thread::sleep(REFOCUS_DELAY);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
         }
-        let error = result.err();
-        let _ = app.emit("applied", json!({ "seq": msg.seq(), "error": error }));
-        if !is_host && let Some(out) = state.client_out.lock().unwrap().as_ref() {
-            let _ = out.send(ClientMsg::Result { seq: msg.seq(), error });
+        let error = result.err().map(|e| e.to_string());
+        stats.record(seq, error.as_deref());
+        let _ = app.emit("applied", json!({ "seq": seq, "error": error, "stats": &stats }));
+        if !is_host {
+            send_status(&state, seq, &stats);
         }
     }
 }
@@ -180,6 +230,7 @@ pub fn run() {
             start_host,
             host_click,
             host_key,
+            host_reset,
             client_connect,
         ])
         .run(tauri::generate_context!())

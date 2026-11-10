@@ -1,5 +1,5 @@
 use std::sync::mpsc::Sender;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -10,6 +10,9 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::protocol::{ClientMsg, PORT, ServerMsg};
 
 const RETRY_MAX: Duration = Duration::from_secs(10);
+/// この間、親機から何も届かなければ(Pingも含め)死んでいるとみなして繋ぎ直す
+const SERVER_TIMEOUT: Duration = Duration::from_secs(15);
+const CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// 親機へ接続し続ける。切れたら間隔を伸ばしながら繋ぎ直す（止めるにはタスクごと abort）。
 pub async fn run(
@@ -35,12 +38,27 @@ pub async fn run(
             let hello = ClientMsg::Hello { name: name.clone(), os: std::env::consts::OS.into() };
             if send(&mut sink, &hello).await {
                 let _ = app.emit("conn", json!({ "state": "connected", "host": host }));
+                let mut last_contact = Instant::now();
+                let mut check_timer = tokio::time::interval(CHECK_INTERVAL);
+                check_timer.tick().await;
                 loop {
                     tokio::select! {
+                        _ = check_timer.tick() => {
+                            if last_contact.elapsed() > SERVER_TIMEOUT {
+                                break;
+                            }
+                        }
                         incoming = stream.next() => match incoming {
                             Some(Ok(Message::Text(text))) => {
-                                if let Ok(msg) = serde_json::from_str::<ServerMsg>(&text) {
-                                    let _ = jobs.send(msg);
+                                last_contact = Instant::now();
+                                match serde_json::from_str::<ServerMsg>(&text) {
+                                    Ok(ServerMsg::Ping) => {
+                                        if !send(&mut sink, &ClientMsg::Pong).await {
+                                            break;
+                                        }
+                                    }
+                                    Ok(msg) => { let _ = jobs.send(msg); }
+                                    Err(_) => {}
                                 }
                             }
                             Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,

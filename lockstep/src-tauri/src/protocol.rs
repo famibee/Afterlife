@@ -16,12 +16,18 @@ pub enum ServerMsg {
     Click { seq: u32, x: f32, y: f32, button: MouseButton },
     /// code は KeyboardEvent.code。押して離す1回のタップとして注入する
     Key { seq: u32, code: String },
+    /// 全機の成功・失敗・取りこぼしの集計をクリアし、連番を数え直す
+    Reset,
+    /// 生死確認。受けたら ClientMsg::Pong を返す
+    Ping,
 }
 
 impl ServerMsg {
-    pub fn seq(&self) -> u32 {
+    /// Click/Key のみ連番を持つ
+    pub fn seq(&self) -> Option<u32> {
         match self {
-            ServerMsg::Click { seq, .. } | ServerMsg::Key { seq, .. } => *seq,
+            ServerMsg::Click { seq, .. } | ServerMsg::Key { seq, .. } => Some(*seq),
+            ServerMsg::Reset | ServerMsg::Ping => None,
         }
     }
 }
@@ -31,6 +37,13 @@ impl ServerMsg {
 #[serde(tag = "type")]
 pub enum ClientMsg {
     Hello { name: String, os: String },
-    /// 1操作ごとの適用結果。error が None なら成功
-    Result { seq: u32, error: Option<String> },
+    /// 直近の操作までの累積結果。reset されるまで fail・missed は減らない
+    Status {
+        seq: u32,
+        ok: u32,
+        fail: u32,
+        missed: u32,
+        first_fail_seq: Option<u32>,
+    },
+    Pong,
 }

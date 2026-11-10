@@ -98,7 +98,9 @@ pub fn window_rect(id: u64) -> Option<(i32, i32, i32, i32)> {
 }
 
 pub fn is_frontmost(id: u64, _pid: i32) -> bool {
-    unsafe { GetForegroundWindow() == hwnd(id) }
+    // 最小化したウィンドウは前面扱いのまま残ることがあるので、最小化中は前面とみなさない
+    // （みなすと focus_window が呼ばれず復元されないまま注入してしまう）
+    unsafe { GetForegroundWindow() == hwnd(id) && !IsIconic(hwnd(id)).as_bool() }
 }
 
 pub fn focus_window(id: u64, _pid: i32) {
@@ -108,7 +110,10 @@ pub fn focus_window(id: u64, _pid: i32) {
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
-        if SetForegroundWindow(hwnd).as_bool() {
+        // 戻り値だけでは成功を保証しない（trueでも実際には前面化しない実装がある）ため、
+        // 実際に前面になったかを都度確かめる
+        let _ = SetForegroundWindow(hwnd);
+        if GetForegroundWindow() == hwnd {
             return;
         }
         // 背面プロセスからの前面化はWindowsに拒否されるため、いま前面にあるスレッドの

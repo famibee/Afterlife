@@ -109,8 +109,19 @@ pub fn window_rect(id: u64) -> Option<(i32, i32, i32, i32)> {
     found
 }
 
-/// 最前面の通常ウィンドウの持ち主で判定する。NSWorkspace と違いランループに依存しない。
+/// 最前面の通常ウィンドウの持ち主で判定する。ただし、ウィンドウを持たない
+/// アプリ（デスクトップだけのFinder等）が実際にはアクティブで、対象のウィンドウが
+/// たまたまウィンドウ一覧の先頭に残っているだけのケースを誤検出しないよう、
+/// NSWorkspace が報告する実際のアクティブアプリの一致も併せて確かめる。
 pub fn is_frontmost(_id: u64, pid: i32) -> bool {
+    use objc2_app_kit::NSWorkspace;
+    let app_is_active = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|a| a.processIdentifier() as i32 == pid)
+        .unwrap_or(false);
+    if !app_is_active {
+        return false;
+    }
     let mut front = None;
     each_window(|dict| {
         front = Some(owner_pid(dict));
@@ -149,3 +160,4 @@ pub fn open_permission_settings() {
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
 }
+
