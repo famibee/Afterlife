@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lockstep</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<section id="role">
+  <h1>Lockstep</h1>
+  <p class="muted">複数の機器でゲームを一手ずつ同時に進めます。この機器の役割を選んでください。</p>
+  <div class="roles">
+    <button data-role="host"><b>親機</b><span>ここで操作し、全機器へ配る</span></button>
+    <button data-role="client"><b>子機</b><span>親機の操作を受けて動く</span></button>
+  </div>
+</section>
+
+<section id="main" hidden>
+  <div id="permission" class="banner" hidden>
+    <span>他のアプリを操作するには「アクセシビリティ」の許可が必要です。</span>
+    <button id="perm-open">システム設定を開く</button>
+    <button id="perm-check">確認しなおす</button>
+  </div>
+
+  <div id="host" hidden>
+    <p>子機に入力するアドレス: <b id="address" class="big">…</b></p>
+    <div id="pad" tabindex="0">
+      <span>ここをクリック、またはキーを押すと全機器へ送ります</span>
+    </div>
+    <h2>子機 <span id="client-count" class="muted"></span></h2>
+    <ul id="clients" class="list"></ul>
+  </div>
+
+  <div id="client" hidden>
+    <form id="connect">
+      <label for="host-input">親機のアドレス</label>
+      <input id="host-input" placeholder="192.168.1.10" autocomplete="off" spellcheck="false">
+      <button>接続</button>
+    </form>
+    <p id="conn" class="muted">未接続</p>
+  </div>
+
+  <p id="status" class="status">適用済み 0 手</p>
+
+  <h2>操作するウィンドウ <button id="refresh" class="small">更新</button></h2>
+  <p id="target-hint" class="muted"></p>
+  <ul id="windows" class="list"></ul>
+</section>
+
+<script src="main.js"></script>
+</body>
+</html>

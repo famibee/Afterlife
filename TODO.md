@@ -2,6 +2,93 @@
 
 現時点で未完了・保留中の事項のみ。経緯や完了済みの作業は各ファイルの実装・コミットメッセージを参照（このファイルには書かない）。
 
+このリポジトリには2つのアプリがある。**節ごとにどちらの話かを分けてある。**
+
+| アプリ | 場所 | 状態 |
+|---|---|---|
+| **Lockstep**（新） | `lockstep/` | 開発中。今後の作業はこちら。使い方は `lockstep/README.md` |
+| **Afterlife**（旧） | repoルート（`src/`・`src-tauri/`） | 2026-11-10 に開発を止めた。コードは変更せず残してある |
+
+目的はどちらも同じ（ノベルゲームを複数機器で一手ずつ同時に進め、画面を目視比較する自分用の治具）。旧アプリは汎用リモート操作ツール化して完成が見えなくなったため、最小構成の Lockstep に作り直した。
+
+### ❓ 判断待ち
+
+- **旧 Afterlife の扱い**: 凍結のまま残すか、Lockstep が実機3台で使えるようになった時点で repo から削除するか。決まるまで「旧アプリ Afterlife」の節は残す。
+- **Lockstep のソースを origin へ反映する時期**: 現状 `lockstep/` は git 未追跡。Win 側へは Syncthing で届いている（`target/`・`node_modules/` は同期されないことを 2026-11-10 に Win 側で確認）。
+
+---
+
+# Lockstep（新アプリ・`lockstep/`）
+
+## 検証待ち
+
+mac 単体（Intel iMac Pro、親機・子機を同一機で起動、対象は TextEdit）では 2026-11-10 に次を確認済み: リリースビルドで画面が出る／クリックを一度も送らずに最初のキーが入る／別アプリ前面からの自動前面化／クリック着弾（計算値 (630.5, 368.5) に対し (631, 369)、セッション層イベントタップで計測・2回）／親機ローカル注入とフォーカス戻し／子機の自動再接続（子機先行・親機再起動の両方）。
+
+- **Windows 実機**: 2026-11-10 に Win 側セッションへ依頼済み（ビルド、exe 単体での表示、キー先行、前面化、最大化の維持、クリック着弾、親機ローカル注入、Avast の反応、Deskflow の影響）。mac 側では `cargo check --target x86_64-pc-windows-msvc` が通るところまで。**実行は一度もしていない。**
+- **実際のゲーム（大阪九龍条）での動作**: mac・Win とも未確認。TextEdit でしか試していない。mac はカーソルを動かさずセッション層へクリックを送る方式なので、ゲーム（Electron）がこれを受け取るかを最初に見る。
+- **Apple Silicon 機（M6）**: universal 版 dmg（`lockstep/src-tauri/target/Lockstep_0.1.0_universal.dmg`、x86_64+arm64、ad-hoc 署名）はビルドできたが、Apple Silicon 上で起動していない。
+- **機器間（LAN 越し）**: mac 親機 ↔ Win 子機、mac ↔ mac とも未実施。mac のファイアウォールが未署名アプリの着信を止めるかも未確認。
+
+## レビューで見つかった要修正（2026-11-11）
+
+優先度順。1〜3 は「同一性を確認する治具」として結果を誤らせるので先に直す。
+
+1. **「適用済み n 手」が実際に適用した数ではない**。表示しているのは最後に受け取った連番。途中から接続した子機や、再接続の間に取りこぼした子機も、次の1手で親機と同じ数字になり、ずれが見えなくなる。→ 各機で「成功した数」を別に数えて表示し、親機はその数で比較する。数え直し用に親機へ「リセット」操作（全機へ配る）を足す。
+2. **失敗が次の成功で消える**。子機の失敗理由は直近1件しか持たず、次の操作が成功すると親機の一覧から消える。その時点でゲームの状態はずれている。→ 失敗はリセットまで残す（失敗回数と最初の失敗の連番）。親機自身の失敗も同じ。
+3. **mac の `is_frontmost` が誤判定する**（`platform/macos.rs`）。最前面の通常ウィンドウの持ち主で判定しているため、ウィンドウを持たないアプリ（デスクトップだけの Finder 等）が前面のとき、ゲームのウィンドウが一番上なら「前面にある」と判定して前面化を省き、キーが別アプリへ入る（成功として報告される）。→ `NSWorkspace.frontmostApplication` の pid 一致も条件に加える。
+4. **Windows の `focus_window` のフォールバックに入らない場合がある**（`platform/windows.rs`）。`SetForegroundWindow` の戻り値だけで成功と判断して return している。→ 呼んだ後に `GetForegroundWindow() == hwnd` を確かめ、違えば前面スレッドへの `AttachThreadInput` に進む。注入スレッドはメッセージキューを持たないので `AttachThreadInput` 自体が失敗しないかも実機で見る。
+5. **切断の検出が遅い**。ping を送っていないので、スリープ復帰や Wi-Fi 切断では TCP が切れたと分かるまで双方が「接続中」のまま。子機は繋ぎ直さず、操作が届かない。→ 数秒おきの WebSocket ping とタイムアウトを両側に入れる。
+6. **対象ウィンドウを作り直されると追従しない**。選択時のウィンドウ ID・pid を持ち続けるので、ゲームの再起動やフルスクリーン切替で ID が変わると失敗する（失敗表示は出る）。→ ID が消えたら同じアプリ名で探し直す。
+7. **親機でキーを押し続けると親機だけ余分に進みうる**。注入のため前面がゲームへ移っている約 80ms の間、押したままの実キーのリピートがゲームへ直接入る。通常の短い押下では起きない（リピート開始は 200ms 以上先）。→ まず README に注意書き。
+8. テストが mac のキーコード表だけ。`local::apply` の分岐と、UI 側の連番・取りこぼし計算は純粋関数に切り出してテストする。
+
+## 未実装・検討
+
+- **グローバルホットキー**（例: F9 で一手進む）。ユーザーは「設定の手間がなければ興味あり」。固定キーなら設定不要。親機でゲームを前面にしたまま操作でき、フォーカスの往復が要らなくなる。`tauri-plugin-global-shortcut` が1つ増える。
+- **Bluetooth など LAN 以外の通信**: 採らない（複数台のペアリングが LAN より手間）。当初要件にはあったので記録だけ残す。
+- **長押し**（Ctrl スキップ等）: 捨てると決めた（2026-11-10）。キーはタップのみ。
+
+## 既知の制限
+
+- **mac は入力をセッション層へ送る**（`inject_macos.rs`）。Deskflow が HID 層に張るタップを避けるため。HID を直接読むゲーム（IOKit・GameController 経由）には届かない可能性がある。Electron 製なら問題ない見込み。
+- **mac の前面化はアプリ単位**。同じアプリの複数ウィンドウは撃ち分けられない。
+- **クリック基準が OS で違う**: mac はタイトルバー込みの枠、Win はクライアント領域。位置が重要なときはフルスクリーンで動かす。
+- **Windows の DPI・複数モニタ**: 未検証（上の Win 実機検証に含めた）。
+- **役割の切り替えは再起動**。停止・切断の処理を持たないことで単純にしている。
+- **認証なし**。同じ LAN の誰でも親機に繋げ、子機は繋いだ先の操作をそのまま入れる。自宅 LAN 前提。
+
+## 開発時の注意
+
+- **Rust は rustup 版を使う**。PATH では Homebrew 版が先に来る。universal ビルドと Windows 向け型検査は `PATH="$HOME/.cargo/bin:$PATH"` を付ける。Windows 向け型検査は `llvm-rc`（`/usr/local/Cellar/llvm/<版>/bin`）も PATH に要る。
+- **`CARGO_TARGET_DIR` に相対パスを渡さない**。Tauri は `src-tauri/` で cargo を動かすので `src-tauri/src-tauri/target/` ができる（2026-11-10 に踏んだ。gitignore の対象外になる）。
+- **`ui/` の変更は自動反映されない**。`devUrl` を使わず静的配信しているため、アプリを再起動して確かめる。
+- **mac で入力注入が効かないときは、まず Deskflow を疑う**。マウスが別の画面にある間、HID 層へ送った合成入力は黙って捨てられる（権限は正常・エラーなし）。`CGGetEventTapList` で `deskflow-core` のタップを確認できる。Lockstep 自体はセッション層送出で回避済みだが、検証用の別ツール（enigo、`CGEventPost(kCGHIDEventTap)`）は影響を受ける。
+- 自動検証は `--autosend`（デバッグビルドのみ）で親機から操作を流し、TextEdit の中身やイベントタップで結果を測る。
+
+---
+
+# 旧アプリ Afterlife（repoルート・開発停止）
+
+以下は旧アプリの未完了事項。**Lockstep では下表のとおり、作りごと無くなったか別の形で解決した。** 旧アプリを再開しない限り対応は不要。
+
+| 旧アプリの項目 | Lockstep では |
+|---|---|
+| 画面比をスナップショットから自動取得 | スナップショット転送を持たない。親機が選んだ対象ウィンドウの縦横比を使う |
+| キー入力が間欠的に効かない | クリックとキーの注入経路を1本にし、前面化の完了を確かめてから入れる。下の「2026-11-10 に分かったこと」参照 |
+| mDNS が IPv6 リンクローカルのみ返す | mDNS を持たない（アドレス手入力） |
+| Vite フルリロードでロール状態がずれる | Vite・SvelteKit を使わない（静的 HTML+JS） |
+| Win 実機が無反応になる／孤児プロセスのポート競合 | Bun サイドカーを持たない。Win 実機での再発有無は検証待ち |
+| リリースビルドで画面が真っ白 | 起きない（mac のリリースビルドで表示を確認済み） |
+| Bun ランタイムの同梱／`/debug/send` | Bun サイドカーを持たない |
+| 第2段階（グローバルフック） | 親機が自分のゲームへローカル注入するので不要 |
+| クリック位置の視覚フィードバック | 持たない |
+| mac の `window_rect` がタイトルバーを含む／Windows の DPI | 同じ制限が残る（Lockstep の「既知の制限」） |
+
+**2026-11-10 に分かったこと（旧アプリのキー入力間欠不良に関係）**
+- `lib.rs` のキー処理は `Injector` を初期化しない（初期化はクリック経路の `perform_click` だけ）。そのセッションで一度もクリックを通していない子機ではキーが入らない。
+- クリック後に `restore_focus` で前面を戻し、次のキーで `activate_window` した直後、前面化の完了を待たずに注入している。下の「疑っている点」はこれで説明がつく。
+- mac 側では Deskflow の影響もありうる（Lockstep「開発時の注意」参照）。enigo は mac で HID 層固定。Win 側への影響は未確認。
+
 ## 動作未確認・要検証
 
 - **親機パッドの画面比をスナップショットから自動取得**: アスペクト比の手動ドロップダウンを削除し、子機から届いたスナップショットの実寸（`naturalWidth`/`naturalHeight`）からパッドの`aspect-ratio`を自動設定するようにした（`HostPad.svelte`）。mac自己テストでは機能したが、Windows側スナップショットでの確認はまだ。
@@ -39,3 +126,63 @@
 - **macOSの`window_rect`がタイトルバーを含む**: `platform/macos.rs`の`list_windows`/`window_rect`は`CGWindowListCopyWindowInfo`の`kCGWindowBounds`（ウィンドウ全体の枠）を使っており、Win側の`GetClientRect`（クライアント領域のみ）と違い、タイトルバー分だけ上端にズレがある。今回の精度検証はWin側のみだったため、mac側のこのズレは未計測。
 - **WindowsのDPI対応**: Per-Monitor-V2 DPI awarenessのmanifest宣言は未確認。高DPI環境・複数モニタでの座標ズレは未検証。
 - **クリック位置の視覚フィードバック、Windows版は正方形**: mac版は円(CSSのradial-gradient)だが、Windows版(`platform/windows.rs`の`show_click_feedback`)は素のWin32レイヤードウィンドウで実装しており、円形クリップ(`SetWindowRgn`等)を入れていないためオレンジ色の塗りつぶし正方形になる。2026-11-04、Win実機でBitBltによる連続撮影・ピクセル差分計測により、クリック位置に約0.35秒表示して消えることを確認済み（中心(1440,830)付近、約28x28pxの正方形）。四隅付近やDPI倍率の影響は未確認。
+
+---
+
+# 参考知見: パッチ生成ツール（bluesnovel-vsce）
+
+拡張機能 BlueSNovel のリポジトリ https://github.com/famibee/bluesnovel-vsce にある、同じ系統（Tauri v2 + Rust、dmg/exe 単体配布の小アプリ）の開発記録。**Lockstep に機能を足すときは、このリポジトリの過去ソースと設計メモを先に見る。** ローカルのソース（`~/Documents/MacHD2/_Famibee/SKYNovel/sn_extension`）は削除予定なので、参照は GitHub 側で行う。
+
+| 見るもの | 場所（リポジトリ内） |
+|---|---|
+| 設計メモ（判断の根拠・実測・踏んだ罠。約900行） | `src/docs/legacy-app-patch.md` |
+| 開発者向け GUI（Tauri v2 + 素の HTML/JS、R2 アップロード付き） | `patch_gen_gui/` |
+| プレイヤー向け配布アプリ（Rust lib + Tauri ランチャー UI） | `patch_app/` |
+| 生成ロジック（TS） | `src/genLegacyPatch.ts`・`LegacyAppCheck.ts`・`InstallerExtract.ts`・`DownloadUrlCheck.ts` |
+
+パッチ生成ツール自体の残作業（ランチャー UI 化の実装順序7以降など）は、あちらの `src/docs/TODO.md` と `legacy-app-patch.md` が正本。ここには写さない。
+
+## Lockstep にそのまま効く知見
+
+**ビルド環境**
+- `cargo`/`rustc` は Homebrew 版と rustup 版が二重にあり、PATH では Homebrew 版が勝つ。`~/.cargo/bin/cargo` を指定するだけでは足りず、cargo が内部で呼ぶ `rustc` も PATH 解決なので、`RUSTC=~/.cargo/bin/rustc`（doctest があれば `RUSTDOC` も）を明示する。
+- mac の universal 版は `cargo tauri build --target universal-apple-darwin` が x64/arm64 の結合まで行う（手動 `lipo` は不要。両ターゲットの `rustup target add` が前提）。
+- **Windows 版は Windows 実機でビルドする**。mac からのクロスコンパイル環境（mingw-w64・cargo-xwin）は不要と判明済みだが、それは「Win 実機に rustup があればそのままビルドできる」という意味。成果物の受け渡し（Win でビルド → blues-sync → mac）は手動のまま。
+- 親クレートと `src-tauri/` のクレートで `[package] name` を同じにすると、`path = ".."` 依存を解決できず失敗する。
+- `.gitignore` に `src-tauri/target/` と `src-tauri/gen/schemas/` を入れ忘れると巨大な生成物が追跡対象に出る。
+
+**Tauri の挙動**
+- `frontendDist` はビルド時にバイナリへ埋め込まれる。実行ファイル末尾へのデータ追記（`[本体][JSON][u32 LE 長][マジック]`）をしても表示は崩れず、起動時に自分自身から読み戻せる（2026-10-22 実機確認）。機器ごとの設定を1ファイルに持たせたいときに使える。
+- `devUrl` を設定せず `frontendDist` を静的配信する構成では、ファイル監視の対象は `src-tauri/` の Rust だけ。`ui/` の変更はアプリを再起動しないと見えない。
+- Rust を編集すると `tauri dev` が自動で再ビルド・再起動する。ログの `Finished` → `Running` の後に行が増えなくなるのを確かめてから次の操作をする（同じ `target/` の取り合いも避ける）。
+- Tauri は Electron ではない。OS の WebView（Win: WebView2、mac: WKWebView）を使うだけで約 25MB。WebView2 は Win10 1803 以降は標準搭載。
+- egui（eframe）は約 4.5MB と小さいが、カード UI・日本語フォント・スレッド処理を手組みする工数が大きく、Tauri へ乗り換えた（2026-10-22 決定。再検討不要）。`bun build --compile` は約 82MB で却下。GUI なしの素の Rust なら約 331KB。
+
+**GUI アプリを AI から起動・確認するときの罠**（あちらの `.claude/skills/patch-gen-gui-dev` より。git 管理外なのでここへ写した）
+- Bash ツールの `run_in_background: true` を使い、コマンドには `&` を付けない。両方やると二重にバックグラウンド化され、気づかずに同じアプリが2つ起動する。起動のたびに `ps` で PID の数を確かめる。
+- `ELECTRON_RUN_AS_NODE` を外して起動する（`env -u ELECTRON_RUN_AS_NODE`）。
+- 画面確認は、対象 PID を前面に出してから `screencapture -x`。「起動した」で済ませず画像を開いて見る。
+- クリックは `osascript -e 'tell application "System Events" to click at {X, Y}'`。受け取るのは論理座標で、`screencapture` の物理ピクセル（Retina は2倍）とも、画像ビューアの縮小表示とも違う。返り値に当たった要素名が出るので、狙いどおりか確かめる。
+- 確認が終わったら、終了してよいかユーザーに聞く（手動で操作を続けたい場合がある）。
+
+**依存を増やさない実装のしかた**
+- HTTP クライアントクレートを入れず、OS 標準の `curl` を絶対パスでサブプロセス実行する（mac 標準、Win10 1803 以降標準）。Windows の `curl.exe` は引数の非 ASCII 文字で失敗することがあるので、URL やパスに日本語を入れない。
+- 簡単な通知・ファイル選択は GUI フレームワークなしで出せる（mac: `osascript`、Win: `mshta.exe`／VBS）。
+- 定期的な再検査は Rust 側の `std::thread` で回し、`app.emit()` で UI へ通知する。処理がブロッキングなら async にする意味は薄い。
+- インストール済みバイナリの arch は、PE ヘッダの Machine・Mach-O の cputype／fat header をファイルから読むだけで判定できる（レジストリ不要）。
+
+**配布**
+- 署名なし配布物への Gatekeeper／SmartScreen 警告は許容し、案内文で説明する方針（個人ツールに証明書の費用は見合わない）。
+- 取得した実行ファイルを直後に起動するパターンは、AV のヒューリスティックに掛かりやすい。
+- macOS 27（2026-09-14 公開）は Apple Silicon 専用で、Rosetta 2 の一般向けサポートは macOS 28 で終わる見込み。mac 向けは universal で出す。
+- 「更新を忘れて古いバイナリを配る」取り違えは、生成の直前に毎回ビルドし直す作りにして仕組みで防いだ（2026-09-14 に実際に踏んだ）。
+
+## ローカルソースを削除する前に
+
+2026-11-11 に確認した範囲で、`sn_extension` のローカルにあって GitHub に無いもの:
+- `src/docs/TODO.private.md`（613行。Marketplace との交渉記録。git 管理外）
+- `.claude/`（スキル `patch-gen-gui-dev` と設定。スキルの要点は上に写した）
+- ステージ済みで未コミットの `bun.lock`・`package.json`
+- git 管理外のテスト補助ファイル（`test/prep.mjs`・`test/ui/runUI.mjs`・`test/int/*.js` など）と `tools/skynovel-Mac2Win`
+
+ブランチは全て `master` にマージ済みで、`master` は `origin/master` と一致している。
