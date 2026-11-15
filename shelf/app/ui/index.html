@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Shelf</title>
+	<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<header>
+		<h1 id="launcherName">Shelf</h1>
+		<button type="button" id="btnRefresh" class="btnGhost">更新を確認</button>
+	</header>
+
+	<main>
+		<section id="installedSection">
+			<h2>インストール済み</h2>
+			<div id="installedCards" class="cardGrid"></div>
+		</section>
+
+		<section id="notInstalledSection" hidden>
+			<h2>その他の作品</h2>
+			<div id="notInstalledCards" class="cardGrid cardGridDim"></div>
+		</section>
+
+		<p id="emptyNotice" class="emptyNotice" hidden>作品情報を読み込めませんでした。</p>
+	</main>
+
+	<footer id="circleFooter" hidden>
+		<span id="circleName"></span>
+		<nav id="circleLinks"></nav>
+		<button type="button" id="btnManual" class="btnGhost">使い方</button>
+	</footer>
+
+	<template id="tmplCard">
+		<div class="card" data-state="">
+			<div class="cardIcon">
+				<img class="cardIconImg" src="" alt="" hidden />
+			</div>
+			<div class="cardName"></div>
+			<div class="cardVersion"></div>
+			<div class="cardStatus">
+				<span class="spinner" hidden></span>
+				<span class="statusBadge"></span>
+			</div>
+			<div class="cardActions"></div>
+		</div>
+	</template>
+
+	<script src="main.js"></script>
+</body>
+</html>

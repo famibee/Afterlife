@@ -2,14 +2,18 @@
 
 現時点で未完了・保留中の事項のみ。経緯や完了済みの作業は各ファイルの実装・コミットメッセージを参照（このファイルには書かない）。
 
-このリポジトリには2つのアプリがある。**節ごとにどちらの話かを分けてある。**
+このリポジトリには複数のアプリがある。**節ごとにどの話かを分けてある。**
 
 | アプリ | 場所 | 状態 |
 |---|---|---|
-| **Lockstep**（新） | `lockstep/` | 開発中。今後の作業はこちら。使い方は `lockstep/README.md` |
+| **Lockstep**（新） | `lockstep/` | 開発中。使い方は `lockstep/README.md` |
+| **Shelf**（新） | `shelf/` | 開発中。第1段階（モックランチャー）実装済み。使い方は `shelf/README.md` |
 | **Afterlife**（旧） | repoルート（`src/`・`src-tauri/`） | 2026-11-10 に開発を止めた。**凍結のまま保持する**（2026-11-11 決定。削除しない） |
 
-目的はどちらも同じ（ノベルゲームを複数機器で一手ずつ同時に進め、画面を目視比較する自分用の治具）。旧アプリは汎用リモート操作ツール化して完成が見えなくなったため、最小構成の Lockstep に作り直した。
+Lockstepはノベルゲームを複数機器で一手ずつ同時に進め画面を目視比較する自分用の治具、Shelfは
+SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまとめて管理するランチャー。
+互いに独立したアプリ。旧Afterlifeは汎用リモート操作ツール化して完成が見えなくなったため、
+最小構成のLockstepに作り直した（Shelfとは無関係）。
 
 ---
 
@@ -95,6 +99,76 @@ Win 実機は 2026-11-10 に単体検証済み。
 - `lib.rs` のキー処理は `Injector` を初期化しない（初期化はクリック経路の `perform_click` だけ）。そのセッションで一度もクリックを通していない子機ではキーが入らない。これが「送信して直後に効くときと効かないときがある」の主因と見られる。
 - クリック後に `restore_focus` で前面を戻し、次のキーで `activate_window` した直後、前面化の完了を待たずに注入している点も一因になりうる。
 - mac 側では Deskflow の影響もありうる（Lockstep「開発時の注意」参照）。enigo は mac で HID 層固定。Win 側への影響は未確認。
+
+---
+
+# Shelf（新アプリ・`shelf/`）
+
+SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまとめて管理するランチャー。
+設計の経緯・旧実装（`famibee/bluesnovel-vsce` のパッチ生成ツール）からの移植元は下の
+「参考知見」節参照。進め方は ①モックランチャー → ②生成ツール → ③モックを実装で置き換え。
+**第1段階（モックランチャー）は実装済み。**
+
+## 検証待ち
+
+- **自動インストール手順の実機確認が途中。** M6（Apple Silicon・macOS 27.2.1）で
+  「ad-hoc署名の.app内Resourcesへの設定ファイル追加」「dmgから/Applicationsへのditto置き換え」を
+  2026-11-16に検証したが、両方とも**ターミナル/VS Code拡張という既に権限が通っている起動元**からの
+  実行だった。**Shelf.app自身（未許可の起動元）から同じditto操作をしたときに「アプリ管理」権限に
+  止められないかは未確認。** Shelf実装が進んだ段階で改めて確認する。
+- **Resourcesへの設定追加はad-hoc署名の封印を壊す（2026-11-16実機確認済み）。**
+  `codesign --verify --deep --strict` が `a sealed resource is missing or invalid` になる。
+  生成ツール（②）が config 埋め込み後に `codesign -s - --force --deep` で再署名する前提。
+  **未実装**（① の時点では該当コードを持たないため影響しない）。
+- **Windowsのサイレント上書きインストール（`/S`）は per-user インストールでのみ実機確認済み**
+  （2026-11-16。UAC無し・Avast無反応で成功）。**全ユーザー向け（perMachine）インストールでの
+  UAC挙動は未検証。**
+- Windows標準curlの `--aws-sigv4` 対応は実機確認済み（2026-11-16。curl 8.22.0）。生成ツール（②）の
+  R2アップロードで使える見込みだが、旧 `patch_gen_gui` は `aws-sdk-s3` を使っており、生成ツール
+  実装時にどちらを採るか未定。
+- **Shelf子機（Win/mac）での実ゲーム操作・実際のインストール上書きは未検証。** ① は
+  `dev-fixtures/` の偽インストールのみで検証済み（`SHELF_MAC_APPS_DIR`・`SHELF_CONFIG` で実機の
+  `/Applications` を汚さずに検証できる）。
+
+## 未実装・検討
+
+- **`shelf/gen/`（生成ツール）**: 第2段階。作品情報・過去出荷ビルド・配布先の持ち方はまだ
+  設計していない。R2アップロードは旧 `patch_gen_gui` の実装（`aws-sdk-s3`）を移植する想定。
+- **段階1（Cloudflare Workerによる所持証明付き短命URL）**: マニフェストの `grantUrl` フィールドの
+  口だけ用意済み（`shelf/core/src/manifest.rs`）。Worker本体・nonce設計・リプレイ対策は未設計。
+  Cloudflareをホスティングに使う場合のみ必要（段階0のままでも動く）。
+- **GitHub Actionsでのスタブビルド**: 第2段階で導入予定。このリポジトリに `.github/` は
+  一度も存在したことがない。`gh` のトークンに `workflow` 権限が無いため、ワークフローファイルの
+  初回pushは `gh auth refresh -s workflow` が必要になる可能性がある。
+- **`pick_legacy_installer` コマンドの実機確認**: osascriptのファイル選択ダイアログ自体は
+  旧実装からの無改修移植（`core/src/dialog.rs`）。`verify_legacy_installer`（チェックサム照合）は
+  ユニットテスト済みだが、ダイアログ操作込みの手動確認は、このセッションにosascriptの補助アクセス
+  権限が無く行えなかった（2026-11-16）。
+
+## 既知の制限
+
+- 購入者チェック（`setting.sn`照合）が使えない過去出荷ビルドがある。詳細・フォールバックは
+  `shelf/docs/manual.md`「購入者チェックが使えない場合」参照。
+- Lockstepと同じ制限（macは入力注入を持たないため非該当だが）：macの前面化はアプリ単位、
+  クリック基準のOS差は非該当（Shelfはクリック注入を行わない）。
+
+## 開発時の注意
+
+- **起動するゲームはElectron製なので、`ELECTRON_RUN_AS_NODE`環境変数が残っているとNodeとして
+  動きウィンドウを出さず数秒で終了する**（2026-11-16・Win実機で確認。原因はClaude Codeの開発
+  シェルがこの変数を継承していたこと）。通常のエンドユーザー環境では付かないはずの変数だが、
+  `launch.rs`・`download.rs`で起動する子プロセスから明示的に`env_remove`で除去済み。**Shelf自体を
+  Claude Codeのシェル経由で手動検証するときも、このシェル自身がこの変数を持っている前提で
+  疑うこと**（mac側の`CLAUDE.md`「Electronアプリの動作確認」と同じ注意点）。
+- `shelf/` は `core/`・`app/`・`gen/`（第2段階）を1つのCargo workspaceにまとめている
+  （Lockstepは単独クレートだが、Shelfは`core`をapp/genで共有するため構成が違う）。
+  クレート名は3つとも別にする（`shelf_core`・`shelf`・将来`shelf_gen`。同名にすると
+  `path`依存が解決できない既知の罠、Lockstep開発時にも踏んだもの）。
+- Rustはrustup版を使う（Homebrew版がPATHで勝つ）。`PATH="$HOME/.cargo/bin:$PATH"
+  RUSTC="$HOME/.cargo/bin/rustc"` を付ける。
+- `SHELF_CONFIG`・`SHELF_MAC_APPS_DIR`・`SHELF_WIN_DIRS` 環境変数で、生成ツールが無い段階でも
+  実機の`/Applications`等を汚さずに動作確認できる（`shelf/dev-fixtures/`・`gen_dev_fixtures`参照）。
+- `ui/`を編集したら`cargo build`をやり直す（Lockstepと同じ、`frontendDist`埋め込み構成のため）。
 
 ---
 

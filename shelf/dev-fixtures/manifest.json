@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-16T00:00:00Z",
+  "circle": {
+    "name": "開発用サークル",
+    "siteUrl": "https://example.com",
+    "supportUrl": "https://example.com/support",
+    "email": "dev@example.com",
+    "links": []
+  },
+  "apps": [
+    {
+      "appId": "sample_game",
+      "name": "サンプルゲーム",
+      "summary": "動作確認用のダミー作品です。",
+      "iconPngBase64": "",
+      "latest": {
+        "version": "1.4.0",
+        "mac": {"arch": "universal", "kind": "dmg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "url": "file:///dev/null"},
+        "win": {"arch": "x64", "kind": "nsis", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "url": "file:///dev/null"}
+      },
+      "store": {"label": "配布サイト", "url": "https://example.com/sample_game"},
+      "eventOnly": false
+    },
+    {
+      "appId": "trial_lookalike",
+      "name": "体験版誤認サンプル",
+      "summary": "製品版チェックサムが一致しないケースの確認用です。",
+      "iconPngBase64": "",
+      "latest": {
+        "version": "1.0.0",
+        "mac": {"arch": "universal", "kind": "dmg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "url": "file:///dev/null"}
+      },
+      "store": {"label": "購入ページ", "url": "https://example.com/trial_lookalike"},
+      "eventOnly": false
+    },
+    {
+      "appId": "needs_confirm_showcase",
+      "name": "確認要サンプル",
+      "summary": "setting.sn自体が読めず自動検出できないケースの確認用です。",
+      "iconPngBase64": "",
+      "latest": {
+        "version": "1.0.0",
+        "mac": {"arch": "universal", "kind": "dmg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "url": "file:///dev/null"}
+      },
+      "store": {"label": "購入ページ", "url": "https://example.com/needs_confirm_showcase"},
+      "eventOnly": false
+    },
+    {
+      "appId": "not_installed_game",
+      "name": "未インストールの作品",
+      "summary": "下段・灰色表示の確認用です。",
+      "iconPngBase64": "",
+      "latest": {
+        "version": "1.0.0",
+        "mac": {"arch": "universal", "kind": "dmg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": 0, "url": "file:///dev/null"}
+      },
+      "store": {"label": "配布サイト", "url": "https://example.com/not_installed_game"},
+      "eventOnly": true
+    }
+  ]
+}

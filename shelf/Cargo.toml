@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "app/src-tauri",
+]
+
+# gen/src-tauri は生成ツール実装時（第2段階）に追加する
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

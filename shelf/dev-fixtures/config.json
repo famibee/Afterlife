@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "launcherName": "開発用 Shelf",
+  "manifestUrl": "file:///Users/ugai/Documents/MacHD2/_AI/Afterlife/shelf/dev-fixtures/manifest.json",
+  "manifestPublicKey": "IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI=",
+  "manualUrl": "https://github.com/famibee/Afterlife/blob/main/shelf/docs/manual.md",
+  "apps": [
+    {
+      "appId": "sample_game",
+      "appName": "SampleGame",
+      "settingSnFileName": "setting.sn",
+      "checksumSetting": ["a95ac4d4d99a642fec0b356a9638af283a20cb6250fa68a8db424716712d2d69"],
+      "checksumInstaller": []
+    },
+    {
+      "appId": "trial_lookalike",
+      "appName": "TrialLookalike",
+      "settingSnFileName": "setting.sn",
+      "checksumSetting": ["a95ac4d4d99a642fec0b356a9638af283a20cb6250fa68a8db424716712d2d69"],
+      "checksumInstaller": []
+    },
+    {
+      "appId": "needs_confirm_showcase",
+      "appName": "NeedsConfirmShowcase",
+      "settingSnFileName": "setting.sn",
+      "checksumSetting": ["a95ac4d4d99a642fec0b356a9638af283a20cb6250fa68a8db424716712d2d69"],
+      "checksumInstaller": ["f055398bb35328e1f19085f88573916ca4a93b9b35c4316b38051cf5f280a20a"]
+    },
+    {
+      "appId": "not_installed_game",
+      "appName": "NotInstalledGame",
+      "settingSnFileName": "setting.sn",
+      "checksumSetting": [],
+      "checksumInstaller": []
+    }
+  ]
+}

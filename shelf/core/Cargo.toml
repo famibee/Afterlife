@@ -1,0 +1,26 @@
+[package]
+name = "shelf_core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Shelf（ゲームランチャー）のUI非依存の判定ロジック。購入者チェック・配布物検証・インストール。詳細は shelf/docs/manual.md 参照"
+publish = false
+
+[lib]
+name = "shelf_core"
+path = "src/lib.rs"
+
+# 開発用フィクスチャ生成（dev-fixtures/）。本体の配布物には含まれない
+[[bin]]
+name = "gen_dev_fixtures"
+path = "src/bin/gen_dev_fixtures.rs"
+
+[dependencies]
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# 本体コード（manifest.rs）は検証（verify_strict）のみ使う。鍵生成・署名はテスト側
+# （dev-fixtures生成含む）でのみ使うが、どちらもランダム性は要らない操作なので
+# デフォルト機能で足りる（rand_core機能はSigningKey::generate用で不要）
+ed25519-dalek = "2"
