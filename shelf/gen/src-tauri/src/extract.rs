@@ -1,0 +1,125 @@
+// インストーラー本体（.dmg/.exe）から、インストールせずに app.asar を取り出す。
+// mac(.dmg)はhdiutilだけで完結する。win(.exe、NSIS)は7-Zipが要る
+// （計画の実装判断参照：生成ツール利用者の作業機に別途用意してもらう。同梱はしない）。
+
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[derive(Debug)]
+pub enum ExtractError {
+	Io(io::Error),
+	ToolMissing(String),
+	NotFound(String),
+}
+
+impl std::fmt::Display for ExtractError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Io(e) => write!(f, "入出力エラー: {e}"),
+			Self::ToolMissing(m) => write!(f, "{m}"),
+			Self::NotFound(m) => write!(f, "{m}"),
+		}
+	}
+}
+
+impl From<io::Error> for ExtractError {
+	fn from(e: io::Error) -> Self { Self::Io(e) }
+}
+
+/// dmg を読み取り専用マウントし、中の.appから Contents/Resources/app.asar を読んで返す。
+/// shelf_core::install.rs の hdiutil attach/detach パターンを踏襲（マウント先の探索・
+/// デバイスノードの取得方法が同じ）
+pub fn extract_app_asar_from_dmg(dmg_path: &Path) -> Result<Vec<u8>, ExtractError> {
+	let output = Command::new("/usr/bin/hdiutil")
+		.args(["attach", "-nobrowse", "-readonly"])
+		.arg(dmg_path)
+		.output()?;
+	if !output.status.success() {
+		return Err(ExtractError::NotFound(format!(
+			"hdiutil attach が失敗した: {}", String::from_utf8_lossy(&output.stderr),
+		)));
+	}
+	let text = String::from_utf8_lossy(&output.stdout);
+	let mount_line = text.lines().rev().find(|l| l.contains('\t') && l.contains("/Volumes/"))
+		.ok_or_else(|| ExtractError::NotFound("マウントポイントの行が見つからない".to_string()))?;
+	let mut fields = mount_line.split('\t').map(str::trim).filter(|s| !s.is_empty());
+	let device = fields.next().map(str::to_string);
+	let mount_point = fields.last().map(PathBuf::from);
+
+	let result = (|| -> Result<Vec<u8>, ExtractError> {
+		let mount_point = mount_point.ok_or_else(|| ExtractError::NotFound("マウントポイントが見つからない".to_string()))?;
+		let app_dir = std::fs::read_dir(&mount_point)?
+			.filter_map(|e| e.ok())
+			.map(|e| e.path())
+			.find(|p| p.extension().and_then(|e| e.to_str()) == Some("app"))
+			.ok_or_else(|| ExtractError::NotFound("dmg内に.appが見つからない".to_string()))?;
+		let asar_path = app_dir.join("Contents/Resources/app.asar");
+		std::fs::read(&asar_path).map_err(|e| ExtractError::NotFound(format!("{}: {e}", asar_path.display())))
+	})();
+
+	if let Some(device) = device {
+		let _ = Command::new("/usr/bin/hdiutil").args(["detach", &device]).status();
+	}
+	result
+}
+
+fn find_7z_binary() -> Option<PathBuf> {
+	for name in ["7z", "7za", "7zz"] {
+		let output = Command::new("which").arg(name).output().ok()?;
+		if output.status.success() {
+			let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+			if !path.is_empty() { return Some(PathBuf::from(path)); }
+		}
+	}
+	None
+}
+
+/// NSISインストーラー(.exe)はそれ自体が7z形式で展開できるアーカイブ。electron-builderの
+/// 既定レイアウト（`resources/app.asar`）を仮定して取り出す
+pub fn extract_app_asar_from_nsis_exe(exe_path: &Path) -> Result<Vec<u8>, ExtractError> {
+	let seven_z = find_7z_binary().ok_or_else(|| ExtractError::ToolMissing(
+		"7-Zip（7z/7za/7zz）が見つからない。NSISインストーラーの展開に必要。\
+		 `brew install p7zip`等でインストールしてください".to_string(),
+	))?;
+
+	let out_dir = std::env::temp_dir().join(format!("shelf_gen_extract_{}", std::process::id()));
+	std::fs::create_dir_all(&out_dir)?;
+
+	let result = (|| -> Result<Vec<u8>, ExtractError> {
+		let output = Command::new(&seven_z)
+			.arg("x").arg(exe_path)
+			.arg(format!("-o{}", out_dir.display()))
+			.arg("-y")
+			.output()?;
+		if !output.status.success() {
+			return Err(ExtractError::NotFound(format!(
+				"7zの展開に失敗した: {}", String::from_utf8_lossy(&output.stderr),
+			)));
+		}
+		let asar_path = out_dir.join("resources/app.asar");
+		std::fs::read(&asar_path).map_err(|e| ExtractError::NotFound(format!("{}: {e}", asar_path.display())))
+	})();
+
+	let _ = std::fs::remove_dir_all(&out_dir);
+	result
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn extract_app_asar_from_dmg_fails_cleanly_for_missing_file() {
+		let result = extract_app_asar_from_dmg(Path::new("/no/such/file.dmg"));
+		assert!(result.is_err());
+	}
+
+	#[test]
+	fn extract_app_asar_from_nsis_exe_reports_missing_tool_or_missing_file() {
+		// 7zが入っていない環境では ToolMissing、入っている環境でも存在しないファイルなら
+		// 展開失敗になる。どちらにせよ Ok にはならないことだけを確認する
+		let result = extract_app_asar_from_nsis_exe(Path::new("/no/such/installer.exe"));
+		assert!(result.is_err());
+	}
+}

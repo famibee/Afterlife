@@ -10,8 +10,8 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
 shelf/
 ├── core/          UI非依存の判定ロジック（crate: shelf_core）
 ├── app/           ランチャー本体（プレイヤー向け・配布スタブ。crate: shelf）
-├── gen/           生成ツール（開発者向け。第2段階で実装）
-├── dev-fixtures/  生成ツールが無い段階でモック動作を確認するための材料
+├── gen/           生成ツール（開発者向け。crate: shelf_gen）
+├── dev-fixtures/  生成ツールを使わずモック動作を確認するための材料
 └── docs/          マニュアル
 ```
 
@@ -34,3 +34,14 @@ npm run app:dev
 
 `ui/` を直したら `cargo build` をやり直す（`frontendDist` を埋め込む構成のため、JS だけ
 直してアプリを再起動しても古いコードのまま）。
+
+## 生成ツール（開発者向け）
+
+```sh
+npm run gen:dev
+```
+
+使い方は `docs/manual.md`「Shelfに自分のゲームを登録する」参照。署名鍵は
+`~/.shelf-gen/signing-key.json`（リポジトリ外）、Win向けstubは
+`gen/prebuilt/x86_64-pc-windows-msvc/shelf.exe`（.gitignore済み、Windows実機でビルドして
+blues-sync経由で配置）。

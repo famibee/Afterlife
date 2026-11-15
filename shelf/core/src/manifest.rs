@@ -13,7 +13,7 @@
 // （本文バイト列そのものに対するed25519署名、base64エンコード）に分けて置く。
 // 生成ツール側がアップロード時にこの2本を作る（第2段階で実装）。
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::Path;
 use std::process::Command;
@@ -23,7 +23,7 @@ const CURL: &str = r"C:\Windows\System32\curl.exe";
 #[cfg(target_os = "macos")]
 const CURL: &str = "/usr/bin/curl";
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OsArtifact {
 	pub arch: String,	// "x64"|"ia32"|"arm64"|"universal"
@@ -37,7 +37,7 @@ pub struct OsArtifact {
 	pub grant_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestRelease {
 	pub version: String,
@@ -47,14 +47,14 @@ pub struct LatestRelease {
 	pub win: Option<OsArtifact>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreInfo {
 	pub label: String,
 	pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ManifestApp {
 	pub app_id: String,
@@ -70,7 +70,7 @@ pub struct ManifestApp {
 	pub event_only: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CircleInfo {
 	pub name: String,
@@ -84,13 +84,13 @@ pub struct CircleInfo {
 	pub links: Vec<CircleLink>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CircleLink {
 	pub label: String,
 	pub url: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
 	pub schema: u32,
@@ -165,6 +165,18 @@ pub fn verify_signature(public_key_b64: &str, body: &[u8], signature_b64: &str) 
 
 	verifying_key.verify_strict(body, &signature)
 		.map_err(|e| format!("署名が一致しない: {e}"))
+}
+
+/// 本文バイト列に ed25519 で署名し、base64（標準アルファベット）を返す。
+/// `verify_signature` と対になる操作（生成ツール側がマニフェスト公開時に呼ぶ）。
+/// 秘密鍵（`SigningKey`）の生成・永続化はここでは扱わない（呼び出し側の責務。
+/// 生成ツールの `signing_key.rs` 参照）
+pub fn sign_body(signing_key: &ed25519_dalek::SigningKey, body: &[u8]) -> String {
+	use base64::{engine::general_purpose::STANDARD, Engine as _};
+	use ed25519_dalek::Signer;
+
+	let signature = signing_key.sign(body);
+	STANDARD.encode(signature.to_bytes())
 }
 
 fn parse_body(body: &[u8]) -> Result<Manifest, ManifestError> {
@@ -252,6 +264,20 @@ mod tests {
 
 		assert!(verify_signature(&public_key_b64, body, &sig_b64).is_ok());
 		assert!(verify_signature(&public_key_b64, b"tampered body", &sig_b64).is_err());
+	}
+
+	#[test]
+	fn sign_body_produces_a_signature_that_verify_signature_accepts() {
+		use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+		let signing_key = SigningKey::from_bytes(&[3u8; 32]);
+		let public_key_b64 = STANDARD.encode(signing_key.verifying_key().as_bytes());
+		let body = sample_manifest_json().as_bytes();
+
+		let sig_b64 = sign_body(&signing_key, body);
+
+		assert!(verify_signature(&public_key_b64, body, &sig_b64).is_ok());
+		assert!(verify_signature(&public_key_b64, b"different body", &sig_b64).is_err());
 	}
 
 	#[test]

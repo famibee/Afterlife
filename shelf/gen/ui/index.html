@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Shelf生成ツール</title>
+	<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<header>
+		<h1>Shelf生成ツール（試作）</h1>
+		<nav class="tabs" id="tabs">
+			<button type="button" class="tab active" data-tab="circle">サークル情報</button>
+			<button type="button" class="tab" data-tab="apps">作品管理</button>
+			<button type="button" class="tab" data-tab="hosting">ホスティング</button>
+		</nav>
+	</header>
+
+	<main>
+		<!-- サークル情報 -->
+		<section id="panel-circle" class="panel active">
+			<label>サークル名 <input type="text" id="circleName" /></label>
+			<label>公式サイト <input type="text" id="circleSiteUrl" placeholder="https://…" /></label>
+			<label>不具合の報告先 <input type="text" id="circleSupportUrl" placeholder="https://…" /></label>
+			<label>連絡先メール <input type="text" id="circleEmail" /></label>
+			<p class="hint">マニュアルURL・ランチャー名は「作品管理」タブの生成設定にまとめてあります。</p>
+
+			<h2>署名鍵</h2>
+			<p class="hint">
+				マニフェストの署名に使う鍵（ed25519）。初回アクセス時に自動生成され、
+				<code>~/.shelf-gen/signing-key.json</code> に保存されます。
+				<strong>この鍵を失うと、既に配布済みのランチャーは新しいマニフェストを一切検証できなくなります
+				（全ランチャーの作り直しが必要）。</strong>バックアップを取っておいてください。
+			</p>
+			<label>公開鍵（base64） <input type="text" id="signingPublicKey" readonly /></label>
+		</section>
+
+		<!-- 作品管理 -->
+		<section id="panel-apps" class="panel">
+			<div class="generate-settings">
+				<label>ランチャー名 <input type="text" id="launcherName" placeholder="例: ふぁみべえ ゲームランチャー" /></label>
+				<label>マニフェストURL <input type="text" id="manifestUrl" placeholder="https://…/manifest.json" /></label>
+				<label>マニュアルURL <input type="text" id="manualUrl" placeholder="https://…/manual.md" /></label>
+				<label>出力フォルダ <input type="text" id="outputDir" readonly />
+					<button type="button" id="btnPickOutputDir">選択</button>
+				</label>
+				<label>ボリューム名（出力ファイル名の基準） <input type="text" id="volumeName" placeholder="例: FamibeeLauncher" /></label>
+				<label><input type="checkbox" id="uploadLaunchers" /> 生成した配布物（ランチャー本体）もR2へアップロードする
+					（<code>games/</code>とは別の<code>launcher/</code>配下に置く。ゲームの更新用インストーラーの
+					すぐ隣には置かない）
+				</label>
+			</div>
+
+			<section id="apps"></section>
+			<button type="button" id="btnAddApp">＋ 作品を追加</button>
+			<button type="button" id="btnGenerate">ランチャーを生成</button>
+
+			<h2>生成結果</h2>
+			<pre id="generateLog"></pre>
+			<button type="button" id="btnUploadLaunchers" hidden>配布物をR2へアップロード</button>
+			<span id="uploadLaunchersStatus"></span>
+		</section>
+
+		<!-- ホスティング -->
+		<section id="panel-hosting" class="panel">
+			<h2>認証（Cloudflare R2）</h2>
+			<label>Account ID <input type="text" id="r2AccountId" placeholder="Cloudflareダッシュボードで確認" /></label>
+			<label>バケット <input type="text" id="r2Bucket" placeholder="例: shelf-dist" /></label>
+			<label>Access Key ID <input type="text" id="r2AccessKeyId" /></label>
+			<label>Secret Access Key <input type="password" id="r2SecretAccessKey" /></label>
+			<label>公開ベースURL（任意） <input type="text" id="r2PublicBaseUrl" placeholder="https://pub-xxxxx.r2.dev" /></label>
+			<p class="hint">これらの値はこのPC内（アプリ設定フォルダ）に平文で保存されます。</p>
+			<button type="button" id="btnR2Save">保存</button>
+			<span id="r2SaveStatus"></span>
+
+			<h2>マニフェストを公開</h2>
+			<p class="hint">「ランチャーを生成」で作ったマニフェストをR2へアップロードします。</p>
+			<button type="button" id="btnPublishManifest">マニフェストをアップロード</button>
+			<span id="publishStatus"></span>
+
+			<h2>アップロード済み一覧</h2>
+			<button type="button" id="btnR2Refresh">更新</button>
+			<table id="r2List">
+				<thead><tr><th>キー</th><th>サイズ</th><th>更新日時</th><th></th></tr></thead>
+				<tbody></tbody>
+			</table>
+		</section>
+	</main>
+
+	<template id="tmplApp">
+		<div class="app-card">
+			<div class="app-card-header">
+				<strong class="appDisplayName">（未スキャン）</strong>
+				<button type="button" class="btn-remove-app">✕</button>
+			</div>
+			<label>プロジェクトフォルダ
+				<input type="text" class="projectFolder" readonly />
+				<button type="button" class="btnPickProject">選択</button>
+			</label>
+			<p class="scanWarnings"></p>
+
+			<label>appId（マニフェスト上の識別子） <input type="text" class="appId" /></label>
+			<label>表示名 <input type="text" class="displayName" /></label>
+			<label>説明 <input type="text" class="summary" /></label>
+			<label><input type="checkbox" class="eventOnly" /> イベント配布のみ（配布サイトへのリンクを出さない）</label>
+			<label>購入/配布先の表示名 <input type="text" class="storeLabel" placeholder="例: DLsite" /></label>
+			<label>購入/配布先URL <input type="text" class="storeUrl" /></label>
+
+			<fieldset>
+				<legend>購入者チェック</legend>
+				<label>setting.snのファイル名（basename）
+					<input type="text" class="settingSnFileName" value="setting.sn" />
+				</label>
+				<p class="cryptoNotice hint" hidden>
+					このプロジェクトは crypto:true です。setting.sn のファイル名は自動計算できないため、
+					手動で入力してください（詳細は docs/manual.md 参照）。
+				</p>
+				<label>過去出荷インストーラー（複数可）
+					<button type="button" class="btnPickLegacyInstallers">選択して追加</button>
+				</label>
+				<ul class="legacyInstallerList"></ul>
+			</fieldset>
+
+			<fieldset class="os-pane" data-os="mac">
+				<legend>mac最新版</legend>
+				<label>インストーラー(.dmg)
+					<input type="text" class="latestPath" readonly />
+					<button type="button" class="btnPickLatest">選択</button>
+				</label>
+				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
+				<label>arch <input type="text" class="latestArch" value="universal" /></label>
+				<label>公開URL（R2アップロード後に自動入力） <input type="text" class="latestUrl" readonly /></label>
+				<button type="button" class="btnUploadLatest">R2へアップロード</button>
+				<span class="uploadStatus"></span>
+			</fieldset>
+
+			<fieldset class="os-pane" data-os="win">
+				<legend>win最新版</legend>
+				<label>インストーラー(.exe)
+					<input type="text" class="latestPath" readonly />
+					<button type="button" class="btnPickLatest">選択</button>
+				</label>
+				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
+				<label>arch <input type="text" class="latestArch" value="x64" /></label>
+				<label>公開URL（R2アップロード後に自動入力） <input type="text" class="latestUrl" readonly /></label>
+				<button type="button" class="btnUploadLatest">R2へアップロード</button>
+				<span class="uploadStatus"></span>
+			</fieldset>
+		</div>
+	</template>
+
+	<script src="main.js"></script>
+</body>
+</html>

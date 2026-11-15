@@ -7,7 +7,7 @@
 | アプリ | 場所 | 状態 |
 |---|---|---|
 | **Lockstep**（新） | `lockstep/` | 開発中。使い方は `lockstep/README.md` |
-| **Shelf**（新） | `shelf/` | 開発中。第1段階（モックランチャー）実装済み。使い方は `shelf/README.md` |
+| **Shelf**（新） | `shelf/` | 開発中。第1段階（モックランチャー）・第2段階（生成ツール）実装済み。使い方は `shelf/README.md` |
 | **Afterlife**（旧） | repoルート（`src/`・`src-tauri/`） | 2026-11-10 に開発を止めた。**凍結のまま保持する**（2026-11-11 決定。削除しない） |
 
 Lockstepはノベルゲームを複数機器で一手ずつ同時に進め画面を目視比較する自分用の治具、Shelfは
@@ -118,32 +118,51 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   止められないかは未確認。** Shelf実装が進んだ段階で改めて確認する。
 - **Resourcesへの設定追加はad-hoc署名の封印を壊す（2026-11-16実機確認済み）。**
   `codesign --verify --deep --strict` が `a sealed resource is missing or invalid` になる。
-  生成ツール（②）が config 埋め込み後に `codesign -s - --force --deep` で再署名する前提。
-  **未実装**（① の時点では該当コードを持たないため影響しない）。
+  生成ツール（`shelf/gen/src-tauri/src/stub_build.rs`の`stamp_and_resign_mac_app`）が
+  config埋め込み後に`codesign -s - --force --deep`で再署名することで対処済み。
+  **mac universalビルド→設定埋め込み→再署名→dmg化→`codesign --verify --deep --strict`の
+  通しを実機テストで確認済み**（`cargo test -p shelf_gen -- --ignored`、2026-11-16）。
+  生成されたdmgを実際に起動してShelf本体が動くかまでは未確認（次の検証項目）。
+  - 踏んだ罠：`shelf/app/src-tauri`はworkspaceメンバーのため、ビルド成果物は
+    `shelf/app/src-tauri/target/`ではなくworkspace共有の`shelf/target/`に出る。さらに
+    `cargo tauri build --target universal-apple-darwin`は`bundle/macos/`配下に.appを
+    残さず、.appはビルド直後の`bundle/dmg/*.dmg`の中にしか存在しない。`rebuild_mac_universal_app()`は
+    このdmgを一旦マウントして.appを取り出す実装にして解決した。
 - **Windowsのサイレント上書きインストール（`/S`）は per-user インストールでのみ実機確認済み**
   （2026-11-16。UAC無し・Avast無反応で成功）。**全ユーザー向け（perMachine）インストールでの
   UAC挙動は未検証。**
-- Windows標準curlの `--aws-sigv4` 対応は実機確認済み（2026-11-16。curl 8.22.0）。生成ツール（②）の
-  R2アップロードで使える見込みだが、旧 `patch_gen_gui` は `aws-sdk-s3` を使っており、生成ツール
-  実装時にどちらを採るか未定。
+- **生成ツール（`shelf/gen/`）のR2アップロード・マニフェスト公開は未検証。**
+  mac dmg生成（universalビルド→設定埋め込み→再署名→dmg化）は実機テストで確認済み
+  （上記参照）。スキャン→チェックサム抽出→R2アップロード→マニフェスト公開は
+  ユニットテストのみ（`project_scan.rs`・`extract.rs`・`r2.rs`・`signing_key.rs`）で、
+  実プロジェクト・実R2資格情報・GUI操作込みの通し検証はまだ（ネイティブのファイル選択
+  ダイアログがこのセッションでは補助アクセス権限の都合で自動操作できなかったため）。
+- **Windows向けインストーラーからの`setting.sn`抽出（`extract_app_asar_from_nsis_exe`）は
+  この開発機に7-Zipが無く未検証。** `which 7z`/`7za`/`7zz`で検出する実装のみ済み。
+  mac向け（dmg・hdiutil経由）は実装済みだが実インストーラーでの検証はまだ。
 - **Shelf子機（Win/mac）での実ゲーム操作・実際のインストール上書きは未検証。** ① は
   `dev-fixtures/` の偽インストールのみで検証済み（`SHELF_MAC_APPS_DIR`・`SHELF_CONFIG` で実機の
   `/Applications` を汚さずに検証できる）。
 
 ## 未実装・検討
 
-- **`shelf/gen/`（生成ツール）**: 第2段階。作品情報・過去出荷ビルド・配布先の持ち方はまだ
-  設計していない。R2アップロードは旧 `patch_gen_gui` の実装（`aws-sdk-s3`）を移植する想定。
 - **段階1（Cloudflare Workerによる所持証明付き短命URL）**: マニフェストの `grantUrl` フィールドの
   口だけ用意済み（`shelf/core/src/manifest.rs`）。Worker本体・nonce設計・リプレイ対策は未設計。
   Cloudflareをホスティングに使う場合のみ必要（段階0のままでも動く）。
-- **GitHub Actionsでのスタブビルド**: 第2段階で導入予定。このリポジトリに `.github/` は
-  一度も存在したことがない。`gh` のトークンに `workflow` 権限が無いため、ワークフローファイルの
-  初回pushは `gh auth refresh -s workflow` が必要になる可能性がある。
+- **GitHub Actionsでのスタブビルド**: 生成ツールは現状ローカルビルド
+  （`cargo tauri build --target universal-apple-darwin`を生成のたびに実行）。
+  このリポジトリに`.github/`は一度も存在したことがない。`gh`のトークンに`workflow`権限が
+  無いため、ワークフローファイルの初回pushは`gh auth refresh -s workflow`が必要になる可能性がある。
+- **`crypto:true`プロジェクトの`settingSnFileName`自動計算**: 旧ツール（TS側）は
+  `uuidv5(relPath, pass)`で算出するが、正確なアルゴリズムが未検証のため実装を見送った
+  （2026-11-16決定。誤実装は「全購入者のチェックサムが永久に不一致になる」事故になるため）。
+  現状は生成ツールの画面で手入力させる。
 - **`pick_legacy_installer` コマンドの実機確認**: osascriptのファイル選択ダイアログ自体は
   旧実装からの無改修移植（`core/src/dialog.rs`）。`verify_legacy_installer`（チェックサム照合）は
   ユニットテスト済みだが、ダイアログ操作込みの手動確認は、このセッションにosascriptの補助アクセス
   権限が無く行えなかった（2026-11-16）。
+- **ドラッグ＆ドロップ**: 生成ツールのUIは旧ツールと違いネイティブダイアログのみ
+  （ファイル選択ボタン）。D&amp;Dは見送った（2026-11-16決定。後回しで追加可能）。
 
 ## 既知の制限
 
@@ -151,6 +170,10 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   `shelf/docs/manual.md`「購入者チェックが使えない場合」参照。
 - Lockstepと同じ制限（macは入力注入を持たないため非該当だが）：macの前面化はアプリ単位、
   クリック基準のOS差は非該当（Shelfはクリック注入を行わない）。
+- **署名鍵（ed25519）は`~/.shelf-gen/signing-key.json`に平文保存**（2026-11-16決定。リポジトリ外・
+  0600権限。紛失すると既配布済みランチャー全てが新マニフェストを検証できなくなる。生成ツールの
+  「サークル情報」タブにこの警告を表示している）。R2の資格情報（`r2_config.json`）も
+  旧ツールと同じく平文保存（アプリ設定フォルダ内）。
 
 ## 開発時の注意
 
@@ -160,10 +183,23 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   `launch.rs`・`download.rs`で起動する子プロセスから明示的に`env_remove`で除去済み。**Shelf自体を
   Claude Codeのシェル経由で手動検証するときも、このシェル自身がこの変数を持っている前提で
   疑うこと**（mac側の`CLAUDE.md`「Electronアプリの動作確認」と同じ注意点）。
-- `shelf/` は `core/`・`app/`・`gen/`（第2段階）を1つのCargo workspaceにまとめている
+- `shelf/` は `core/`・`app/`・`gen/`を1つのCargo workspaceにまとめている
   （Lockstepは単独クレートだが、Shelfは`core`をapp/genで共有するため構成が違う）。
-  クレート名は3つとも別にする（`shelf_core`・`shelf`・将来`shelf_gen`。同名にすると
+  クレート名は3つとも別にする（`shelf_core`・`shelf`・`shelf_gen`。同名にすると
   `path`依存が解決できない既知の罠、Lockstep開発時にも踏んだもの）。
+- 生成ツール（`shelf/gen/`）は`npm run gen:dev`/`gen:build`で起動する。R2アップロード先は
+  `games/<appSlug>/<os>/<sha256先頭16桁>/<ファイル名>`、マニフェストは固定キー
+  `manifest.json`・`manifest.json.sig`（内容アドレスにしない。埋め込み設定の`manifestUrl`が
+  指す先はビルド後に変わってはいけないため）。
+- **生成したランチャー配布物（Win exe・mac dmg）自体のR2アップロードは既定では行わない**
+  （開発者が自分のサイトで配る1点もの、という位置づけ）。「作品管理」タブの
+  「生成した配布物もR2へアップロードする」をオンにすると、`games/`（ゲーム更新用の
+  インストーラー）とは別名前空間の`launcher/<os>/<sha256先頭16桁>/<ファイル名>`に
+  置ける（2026-11-16ユーザー指摘：パッチ配布物のすぐ隣に置くのを避けたいとの要望に対応）。
+- Win向けstubは`shelf/gen/prebuilt/x86_64-pc-windows-msvc/shelf.exe`に置く運用
+  （Lockstep・旧patch_gen_guiと同じ、Windows実機でビルドしblues-sync経由で配置。
+  `.gitignore`済みなので開発機に無くても`gen/`自体は動く。無ければ生成時にwin側だけ
+  スキップする設計）。
 - Rustはrustup版を使う（Homebrew版がPATHで勝つ）。`PATH="$HOME/.cargo/bin:$PATH"
   RUSTC="$HOME/.cargo/bin/rustc"` を付ける。
 - `SHELF_CONFIG`・`SHELF_MAC_APPS_DIR`・`SHELF_WIN_DIRS` 環境変数で、生成ツールが無い段階でも
