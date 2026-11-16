@@ -1,7 +1,7 @@
 (?d).git
 (?d).claude/settings.local.json
 (?d)node_modules
-(?d)src-tauri/target
+(?d)**/target
 (?d)no_sync
 (?d).DS_Store
 (?d)Thumbs.db
