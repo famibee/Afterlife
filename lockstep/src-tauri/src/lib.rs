@@ -204,9 +204,28 @@ fn run_injector(app: AppHandle, jobs: Receiver<ServerMsg>) {
     }
 }
 
+/// F9: 親機のパッド中央をクリックしたのと同じ操作を送る（グローバルホットキー。ゲーム側を
+/// 前面にしたままフォーカスの往復なしで一手進められる）。子機・対象未選択時は何もしない
+/// （host_clickと同じ「操作専用」判定はrun_injector側が担うので、ここではis_hostだけ見る）。
+fn handle_f9(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.is_host.load(Ordering::SeqCst) {
+        host_send(&state, |seq| ServerMsg::Click { seq, x: 0.5, y: 0.5, button: MouseButton::Left });
+    }
+}
+
 pub fn run() {
     let (jobs_tx, jobs_rx) = channel();
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        handle_f9(app);
+                    }
+                })
+                .build(),
+        )
         .manage(AppState {
             host: Arc::new(Host::new()),
             is_host: AtomicBool::new(false),
@@ -217,6 +236,9 @@ pub fn run() {
             client_task: Mutex::new(None),
         })
         .setup(move |app| {
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            app.global_shortcut().register("F9")?;
+
             let handle = app.handle().clone();
             std::thread::spawn(move || run_injector(handle, jobs_rx));
             Ok(())
