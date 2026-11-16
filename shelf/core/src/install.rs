@@ -76,9 +76,9 @@ fn find_app_bundle(dir: &Path) -> io::Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn mac_swap_install(mounted_app: &Path, app_name: &str) -> io::Result<()> {
-	let dest = PathBuf::from("/Applications").join(format!("{app_name}.app"));
-	let old = PathBuf::from("/Applications").join(format!("{app_name}.app.old"));
+fn mac_swap_install(mounted_app: &Path, app_name: &str, apps_dir: &Path) -> io::Result<()> {
+	let dest = apps_dir.join(format!("{app_name}.app"));
+	let old = apps_dir.join(format!("{app_name}.app.old"));
 	let _ = std::fs::remove_dir_all(&old);	// 前回の残骸があれば先に消す
 
 	let had_old_install = dest.exists();
@@ -99,31 +99,33 @@ fn mac_swap_install(mounted_app: &Path, app_name: &str) -> io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn install_auto(downloaded_path: &Path, app_name: &str) -> io::Result<()> {
+fn install_auto(downloaded_path: &Path, app_name: &str, apps_dir: &Path) -> io::Result<()> {
 	let (device, mount_point) = hdiutil_attach(downloaded_path)?;
 	let result = (|| {
 		let app = find_app_bundle(&mount_point)?;
-		mac_swap_install(&app, app_name)
+		mac_swap_install(&app, app_name, apps_dir)
 	})();
 	hdiutil_detach(&device);
 	result
 }
 
 #[cfg(target_os = "windows")]
-fn install_auto(downloaded_path: &Path, _app_name: &str) -> io::Result<()> {
+fn install_auto(downloaded_path: &Path, _app_name: &str, _apps_dir: &Path) -> io::Result<()> {
 	let status = Command::new(downloaded_path).arg("/S").status()?;
 	if status.success() { Ok(()) }
 	else { Err(io::Error::other(format!("インストーラーが失敗した（終了コード: {status}）"))) }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn install_auto(_downloaded_path: &Path, _app_name: &str) -> io::Result<()> {
+fn install_auto(_downloaded_path: &Path, _app_name: &str, _apps_dir: &Path) -> io::Result<()> {
 	Err(io::Error::other("対象外プラットフォーム"))
 }
 
-/// `dest_dir` は取得先（一時ディレクトリ）。`app_name` はmacのインストール先（`/Applications/<app_name>.app`）を
-/// 決めるのに使う。
-pub fn install_update(artifact: &OsArtifact, app_name: &str, dest_dir: &Path) -> Result<InstallOutcome, InstallError> {
+/// `dest_dir` は取得先（一時ディレクトリ）。`app_name` はmacのインストール先
+/// （`<apps_dir>/<app_name>.app`）を決めるのに使う。`apps_dir` は本番では`/Applications`
+/// だが、検証時は呼び出し側（lib.rsの`mac_apps_dir()`）がSHELF_MAC_APPS_DIRで
+/// 差し替えられる（Windowsでは使わない）。
+pub fn install_update(artifact: &OsArtifact, app_name: &str, dest_dir: &Path, apps_dir: &Path) -> Result<InstallOutcome, InstallError> {
 	let path = download::download(&artifact.url, dest_dir)
 		.map_err(|e| InstallError::Download(e.to_string()))?;
 
@@ -133,7 +135,7 @@ pub fn install_update(artifact: &OsArtifact, app_name: &str, dest_dir: &Path) ->
 		return Err(InstallError::ChecksumMismatch { expected: artifact.sha256.clone(), actual });
 	}
 
-	match install_auto(&path, app_name) {
+	match install_auto(&path, app_name, apps_dir) {
 		Ok(()) => Ok(InstallOutcome::Installed),
 		Err(_e) => {
 			// 自動インストールに失敗・権限等に止められた場合は「取得して開くだけ」に退避する
@@ -168,7 +170,7 @@ mod tests {
 		let url = format!("file://{}", fake_download.display());
 		let artifact = sample_artifact("0000000000000000000000000000000000000000000000000000000000000000", &url);
 
-		let result = install_update(&artifact, "NoSuchApp", &dir);
+		let result = install_update(&artifact, "NoSuchApp", &dir, &PathBuf::from("/Applications"));
 		assert!(matches!(result, Err(InstallError::ChecksumMismatch { .. })));
 
 		std::fs::remove_dir_all(&dir).unwrap();
@@ -180,7 +182,7 @@ mod tests {
 		std::fs::create_dir_all(&dir).unwrap();
 
 		let artifact = sample_artifact("anything", "file:///no/such/path/installer.bin");
-		let result = install_update(&artifact, "NoSuchApp", &dir);
+		let result = install_update(&artifact, "NoSuchApp", &dir, &PathBuf::from("/Applications"));
 		assert!(matches!(result, Err(InstallError::Download(_))));
 
 		std::fs::remove_dir_all(&dir).unwrap();

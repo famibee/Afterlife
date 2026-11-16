@@ -64,15 +64,37 @@ pub fn extract_app_asar_from_dmg(dmg_path: &Path) -> Result<Vec<u8>, ExtractErro
 	result
 }
 
+/// PATHを`which`（mac/Linux）・`where`（Windows）で探す。見つからなければ、
+/// 7-Zipの既定インストール先（PATHに通っているとは限らない。2026-11-16・Win実機で
+/// `C:\Program Files\7-Zip\7z.exe`はあるがPATH未登録と判明）も見る。
 fn find_7z_binary() -> Option<PathBuf> {
-	for name in ["7z", "7za", "7zz"] {
-		let output = Command::new("which").arg(name).output().ok()?;
-		if output.status.success() {
-			let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-			if !path.is_empty() { return Some(PathBuf::from(path)); }
+	#[cfg(windows)]
+	let (which_cmd, candidates): (&str, &[&str]) = ("where", &[
+		"7z", "7za", "7zz", "7zr",
+	]);
+	#[cfg(not(windows))]
+	let (which_cmd, candidates): (&str, &[&str]) = ("which", &["7z", "7za", "7zz"]);
+
+	for name in candidates {
+		if let Ok(output) = Command::new(which_cmd).arg(name).output() {
+			if output.status.success() {
+				let path = String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").trim().to_string();
+				if !path.is_empty() { return Some(PathBuf::from(path)); }
+			}
 		}
 	}
-	None
+
+	#[cfg(windows)]
+	let fixed_paths: &[&str] = &[
+		r"C:\Program Files\7-Zip\7z.exe",
+		r"C:\Program Files (x86)\7-Zip\7z.exe",
+	];
+	#[cfg(target_os = "macos")]
+	let fixed_paths: &[&str] = &["/usr/local/bin/7z", "/opt/homebrew/bin/7z"];
+	#[cfg(not(any(windows, target_os = "macos")))]
+	let fixed_paths: &[&str] = &[];
+
+	fixed_paths.iter().map(PathBuf::from).find(|p| p.exists())
 }
 
 /// NSISインストーラー(.exe)はそれ自体が7z形式で展開できるアーカイブ。electron-builderの

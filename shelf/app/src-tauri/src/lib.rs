@@ -193,9 +193,10 @@ async fn install_update(app: AppHandle, state: tauri::State<'_, AppState>, app_i
 
 	let dest_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("downloads");
 	let app_name = entry.app_name.clone();
+	let apps_dir = mac_apps_dir();
 
 	let outcome = tauri::async_runtime::spawn_blocking(move || {
-		install::install_update(&artifact, &app_name, &dest_dir)
+		install::install_update(&artifact, &app_name, &dest_dir, &apps_dir)
 	})
 	.await
 	.map_err(|e| e.to_string())?
