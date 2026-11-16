@@ -141,11 +141,12 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   （`install.rs`の`mac_swap_install`経由）を実行。**「アプリ管理」等の権限ダイアログは
   出ず、何も聞かれずに成功した**（`codesign --verify --strict`もOK、`.old`残骸無し、
   dmgも自動detach）。これで「未許可の起動元からの実行」という前回の検証の穴は埋まった。
-  - ~~食い違いの指摘（M6より）~~ **対応済み。** `shelf_core::install.rs`の`mac_swap_install`・
-    `install_auto`・`install_update`に`apps_dir`引数を追加し、呼び出し元
-    （`app/src-tauri/src/lib.rs`の`install_update`コマンド）から`mac_apps_dir()`
-    （`SHELF_MAC_APPS_DIR`対応）を渡すようにした。ビルド・既存テストは通過済み。
-    実機（M6）での`SHELF_MAC_APPS_DIR`指定でのインストール経路検証はまだ。
+  - ~~食い違いの指摘（M6より）~~ **対応済み・実機確認済み（2026-11-17、M6）。**
+    `shelf_core::install.rs`の`mac_swap_install`・`install_auto`・`install_update`に
+    `apps_dir`引数を追加し、呼び出し元（`app/src-tauri/src/lib.rs`の`install_update`
+    コマンド）から`mac_apps_dir()`（`SHELF_MAC_APPS_DIR`対応）を渡すようにした。
+    M6が`SHELF_MAC_APPS_DIR`を指定した一時ディレクトリに対して「更新」ボタンから
+    ditto置き換えが行われることを確認（v1→v2、署名検証OK、`/Applications`は無変更）。
 - **Resourcesへの設定追加はad-hoc署名の封印を壊す（2026-11-16実機確認済み）。**
   `codesign --verify --deep --strict` が `a sealed resource is missing or invalid` になる。
   生成ツール（`shelf/gen/src-tauri/src/stub_build.rs`の`stamp_and_resign_mac_app`）が
@@ -179,7 +180,9 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   mac向け（dmg・hdiutil経由）は実装済みだが実インストーラーでの検証はまだ。
 - **Shelf子機（Win/mac）での実ゲーム操作・実際のインストール上書きは未検証。** 第1段階は
   `dev-fixtures/` の偽インストールのみで検証済み（`SHELF_MAC_APPS_DIR`・`SHELF_CONFIG` で実機の
-  `/Applications` を汚さずに検証できる）。
+  `/Applications` を汚さずに検証できる）。**mac側はM6で試みたが実施できず（2026-11-17）**:
+  M6のMacにSKYNovel/BlueSNovel製の実ゲームが入っていないため。対象の`appName`・実際の
+  `setting.sn`のチェックサム・配布dmgを渡せば実施可能とのこと。
 
 ## 未実装・検討
 
@@ -202,7 +205,14 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
   実ファイルを選択して「選択」ボタンを押す完全な自動操作（Cmd+Shift+Gでのパス直接入力→
   Return→「選択」クリック）は、ボタンが`enabled:false`のままで確定できず未達成
   （ファイルがブラウザ上で選択状態にならない。キー入力のタイミング等、原因未特定）。
-  優先度低のため深追いはしていない。
+  **M6でも同じ症状を再現（2026-11-17）**: System Eventsでキー入力を送っても、
+  `choose file`ダイアログ（バックグラウンドの`osascript`プロセスが出す）がキーボード
+  フォーカスを得られず、最前面アプリ（別アプリ）へ入力が漏れる恐れがあるため中断、とのこと。
+  自動化環境固有の問題ではなく、**バックグラウンドプロセスが出すダイアログがフォーカスを
+  取れないという設計上の制約**の可能性が高い。対策案（M6より）: `osascript`の`choose file`
+  をやめ、Tauriの標準ファイルダイアログ（`tauri-plugin-dialog`・`rfd`等、フォアグラウンドの
+  アプリプロセスが出す）に置き換える。優先度低のため着手はしていないが、人手での動作確認
+  （ユーザー自身の操作）は問題なく通る見込み。
 - **ドラッグ＆ドロップ**: 生成ツールのUIは旧ツールと違いネイティブダイアログのみ
   （ファイル選択ボタン）。D&amp;Dは見送った（2026-11-16決定。後回しで追加可能）。
 
