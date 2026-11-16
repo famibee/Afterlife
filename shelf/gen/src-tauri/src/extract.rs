@@ -97,8 +97,44 @@ fn find_7z_binary() -> Option<PathBuf> {
 	fixed_paths.iter().map(PathBuf::from).find(|p| p.exists())
 }
 
+/// `dir`以下を再帰的に探し、ファイル名が`predicate`を満たす最初のパスを返す
+fn find_file_recursive(dir: &Path, predicate: impl Fn(&str) -> bool + Copy) -> Option<PathBuf> {
+	let entries = std::fs::read_dir(dir).ok()?;
+	for entry in entries.filter_map(|e| e.ok()) {
+		let path = entry.path();
+		if path.is_dir() {
+			if let Some(found) = find_file_recursive(&path, predicate) {
+				return Some(found);
+			}
+		} else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+			if predicate(name) {
+				return Some(path);
+			}
+		}
+	}
+	None
+}
+
+fn run_7z_extract(seven_z: &Path, archive: &Path, out_dir: &Path) -> Result<(), ExtractError> {
+	let output = Command::new(seven_z)
+		.arg("x").arg(archive)
+		.arg(format!("-o{}", out_dir.display()))
+		.arg("-y")
+		.output()?;
+	if output.status.success() {
+		Ok(())
+	} else {
+		Err(ExtractError::NotFound(format!(
+			"7zの展開に失敗した（{}）: {}", archive.display(), String::from_utf8_lossy(&output.stderr),
+		)))
+	}
+}
+
 /// NSISインストーラー(.exe)はそれ自体が7z形式で展開できるアーカイブ。electron-builderの
-/// 既定レイアウト（`resources/app.asar`）を仮定して取り出す
+/// NSISは`resources/app.asar`を直下に置かず、`$PLUGINSDIR\app-64.7z`
+/// （32bit版は`app-32.7z`、ARM64版は`app-arm64.7z`の可能性がある）に二重圧縮して入れている
+/// （2026-11-17・Win実機で実配布インストーラー6本すべてこの構造だったと確認）。
+/// 一段目を展開→中の`app-*.7z`を探す→二段目を展開、という2段階で取り出す。
 pub fn extract_app_asar_from_nsis_exe(exe_path: &Path) -> Result<Vec<u8>, ExtractError> {
 	let seven_z = find_7z_binary().ok_or_else(|| ExtractError::ToolMissing(
 		"7-Zip（7z/7za/7zz）が見つからない。NSISインストーラーの展開に必要。\
@@ -109,17 +145,26 @@ pub fn extract_app_asar_from_nsis_exe(exe_path: &Path) -> Result<Vec<u8>, Extrac
 	std::fs::create_dir_all(&out_dir)?;
 
 	let result = (|| -> Result<Vec<u8>, ExtractError> {
-		let output = Command::new(&seven_z)
-			.arg("x").arg(exe_path)
-			.arg(format!("-o{}", out_dir.display()))
-			.arg("-y")
-			.output()?;
-		if !output.status.success() {
-			return Err(ExtractError::NotFound(format!(
-				"7zの展開に失敗した: {}", String::from_utf8_lossy(&output.stderr),
-			)));
+		let stage1 = out_dir.join("stage1");
+		run_7z_extract(&seven_z, exe_path, &stage1)?;
+
+		// 直下にresources/app.asarがあれば（電子ビルダーの設定次第ではこの構造もあり得る）
+		// それを優先し、無ければ二重圧縮されたapp-*.7zを探して二段目を展開する
+		if let Some(direct) = find_file_recursive(&stage1, |n| n == "app.asar") {
+			return std::fs::read(&direct).map_err(|e| ExtractError::NotFound(format!("{}: {e}", direct.display())));
 		}
-		let asar_path = out_dir.join("resources/app.asar");
+
+		let inner_archive = find_file_recursive(&stage1, |n| {
+			n.starts_with("app-") && n.ends_with(".7z")
+		}).ok_or_else(|| ExtractError::NotFound(
+			"一段目の展開結果にresources/app.asarもapp-*.7zも見つからない".to_string(),
+		))?;
+
+		let stage2 = out_dir.join("stage2");
+		run_7z_extract(&seven_z, &inner_archive, &stage2)?;
+
+		let asar_path = find_file_recursive(&stage2, |n| n == "app.asar")
+			.ok_or_else(|| ExtractError::NotFound(format!("{}の展開結果にapp.asarが見つからない", inner_archive.display())))?;
 		std::fs::read(&asar_path).map_err(|e| ExtractError::NotFound(format!("{}: {e}", asar_path.display())))
 	})();
 

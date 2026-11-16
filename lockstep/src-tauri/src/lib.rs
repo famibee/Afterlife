@@ -88,9 +88,16 @@ fn local_ipv4() -> Option<String> {
 #[tauri::command]
 async fn start_host(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
     if !state.is_host.swap(true, Ordering::SeqCst) {
-        if let Err(e) = net::server::listen(app, state.host.clone()).await {
+        if let Err(e) = net::server::listen(app.clone(), state.host.clone()).await {
             state.is_host.store(false, Ordering::SeqCst);
             return Err(format!("ポート {PORT} で待ち受けできません: {e}"));
+        }
+        // F9は親機の間だけ奪う（子機では前面アプリがF9を使えるように残す）。他のアプリが
+        // 既にF9を登録している場合は致命的エラーにせず諦める（2026-11-17・Win実機で発覚：
+        // 登録失敗をそのまま伝播させるとsetup全体がpanicしてLockstep自体が起動できなくなる）。
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        if let Err(e) = app.global_shortcut().register("F9") {
+            eprintln!("F9のグローバル登録に失敗（他のアプリが使用中の可能性）: {e}");
         }
     }
     Ok(local_ipv4().unwrap_or_else(|| "IPアドレス不明".into()))
@@ -236,9 +243,7 @@ pub fn run() {
             client_task: Mutex::new(None),
         })
         .setup(move |app| {
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
-            app.global_shortcut().register("F9")?;
-
+            // F9の登録はstart_host側（親機になったときだけ）で行う。ここでは登録しない。
             let handle = app.handle().clone();
             std::thread::spawn(move || run_injector(handle, jobs_rx));
             Ok(())

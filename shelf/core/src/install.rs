@@ -15,6 +15,7 @@
 use crate::{checksum, download, manifest::OsArtifact};
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -109,11 +110,54 @@ fn install_auto(downloaded_path: &Path, app_name: &str, apps_dir: &Path) -> io::
 	result
 }
 
+// `requireAdministrator`のインストーラーをCreateProcess（Command::new）で非昇格のまま起動すると、
+// UACダイアログが出ないままERROR_ELEVATION_REQUIRED(os error 740)で失敗する（2026-11-17・Win実機で
+// perMachineインストーラーにて確認）。ShellExecuteExWに"runas"動詞で昇格を要求する必要がある。
 #[cfg(target_os = "windows")]
 fn install_auto(downloaded_path: &Path, _app_name: &str, _apps_dir: &Path) -> io::Result<()> {
-	let status = Command::new(downloaded_path).arg("/S").status()?;
-	if status.success() { Ok(()) }
-	else { Err(io::Error::other(format!("インストーラーが失敗した（終了コード: {status}）"))) }
+	use std::os::windows::ffi::OsStrExt;
+	use windows::Win32::Foundation::CloseHandle;
+	use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
+	use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+	use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+	use windows::core::PCWSTR;
+
+	fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
+		s.encode_wide().chain(std::iter::once(0)).collect()
+	}
+
+	let file = wide(downloaded_path.as_os_str());
+	let params = wide(std::ffi::OsStr::new("/S"));
+	let verb = wide(std::ffi::OsStr::new("runas"));
+
+	let mut info = SHELLEXECUTEINFOW {
+		cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+		fMask: SEE_MASK_NOCLOSEPROCESS,
+		lpVerb: PCWSTR(verb.as_ptr()),
+		lpFile: PCWSTR(file.as_ptr()),
+		lpParameters: PCWSTR(params.as_ptr()),
+		nShow: SW_SHOWNORMAL.0,
+		..Default::default()
+	};
+
+	unsafe {
+		ShellExecuteExW(&mut info).map_err(|e| {
+			// ユーザーがUACダイアログを拒否した場合はERROR_CANCELLED(1223)になる
+			io::Error::other(format!("インストーラーの起動に失敗した（昇格を拒否した可能性）: {e}"))
+		})?;
+
+		if info.hProcess.is_invalid() {
+			return Err(io::Error::other("インストーラーのプロセスハンドルを取得できなかった"));
+		}
+		WaitForSingleObject(info.hProcess, INFINITE);
+		let mut exit_code = 0u32;
+		let result = GetExitCodeProcess(info.hProcess, &mut exit_code);
+		let _ = CloseHandle(info.hProcess);
+		result.map_err(|e| io::Error::other(format!("終了コードの取得に失敗した: {e}")))?;
+
+		if exit_code == 0 { Ok(()) }
+		else { Err(io::Error::other(format!("インストーラーが失敗した（終了コード: {exit_code}）"))) }
+	}
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

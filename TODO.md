@@ -53,7 +53,18 @@ Win 実機は 2026-11-10 に単体検証済み。
 - **新規接続した子機の「取りこぼし」表示が過大になる**: 子機が接続する前に親機が送っていた分の連番との差を「取りこぼし」として数えてしまう（例: 親機が8手まで進めた後に新しい子機が繋ぐと、最初の1手で「取りこぼし8手」と出る）。実害はない（接続前のそもそも受け取りようがない操作なので）が紛らわしい表示。子機接続時に親機側の現在のseqを通知し、`expected_next`をそれで初期化すれば直る見込み。未対応、優先度低。
 - **mac の入力ソースが日本語（かな）だと、注入したキーが変換される**: M6 の TextEdit で "a" が "あ" に、Enter が改行でなく変換確定になった。Lockstep側の注入（物理キーコード送出）は正しく動いているが、IME が有効だと想定通りの文字にならない。英数入力に切り替えれば解消する。検証用に文字入力で確認するときは、対象機の入力ソースを先に確認すること。
 
-**グローバルホットキー（F9でクリック）を実装（2026-11-17）。** `tauri-plugin-global-shortcut`を追加し、F9押下でパッド中央（0.5, 0.5）をクリックしたのと同じ操作を送るようにした（`lib.rs`の`handle_f9`。`is_host`の間だけ有効）。mac（Intel iMac Pro、このセッション）で実機確認済み：TextEditを対象に選択した状態で、別アプリが前面でもF9（グローバル）を押すと対象へ前面化→クリック→Lockstepへ復帰が働き、「成功」としてカウントされた。**Win・M6での検証はまだ。**
+**グローバルホットキー（F9でクリック）を実装（2026-11-17）。** `tauri-plugin-global-shortcut`を追加し、F9押下でパッド中央（0.5, 0.5）をクリックしたのと同じ操作を送るようにした（`lib.rs`の`handle_f9`。`is_host`の間だけ有効）。mac（Intel iMac Pro、このセッション）で実機確認済み：TextEditを対象に選択した状態で、別アプリが前面でもF9（グローバル）を押すと対象へ前面化→クリック→Lockstepへ復帰が働き、「成功」としてカウントされた。
+
+**Win実機検証（2026-11-17）で2件の不具合が見つかり、修正済み。**
+- F9自体の注入は5/5成功（ClickProbe.exeで座標確認、前面化・復帰も含め正常）。
+- **不具合A（修正済み）**: 他アプリが先にF9を`RegisterHotKey`していると、起動直後に`HotKey already registered`でpanicしてLockstep自体が落ちていた。登録は`start_host`内へ移し、失敗しても警告を出すだけで続行するようにした。
+- **不具合B（修正済み）**: 登録が役割によらず常時行われ、子機・役割未選択の間も前面アプリのF9を奪っていた。登録を「親機になったとき（`start_host`）」だけに限定し、`.setup()`での無条件登録をやめた。
+- 修正後はmac側で子機モード中にF9が前面アプリへ素通りすることを確認済み。**Win実機でも再検証完了（2026-11-17）**:
+  不具合Aは他アプリ使用中でも8秒生存・panicせず（エラーは標準エラーに出るのみ、WM_HOTKEYは先に登録した側へ）。
+  不具合Bは子機でF9を奪わなくなったことを3パターン（Lockstep無し・起動中・終了後）で確認。親機の通常動作も
+  回帰なし（5/5成功）。**気づいた点（未対応・README追記候補）**: 新しいパスのexeを親機として初めて起動すると、
+  Windowsファイアウォールの許可ダイアログが前面に出て、閉じるまで前面化・操作が進まない
+  （TCP待ち受けによるもの。初回起動時の注意としてREADMEに一言あると良いとのこと）。
 
 ## 未実装・検討
 
@@ -162,21 +173,34 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
     `cargo tauri build --target universal-apple-darwin`は`bundle/macos/`配下に.appを
     残さず、.appはビルド直後の`bundle/dmg/*.dmg`の中にしか存在しない。`rebuild_mac_universal_app()`は
     このdmgを一旦マウントして.appを取り出す実装にして解決した。
-- **Windowsのサイレント上書きインストール（`/S`）は per-user インストールでのみ実機確認済み**
-  （2026-11-16。UAC無し・Avast無反応で成功）。**全ユーザー向け（perMachine）インストールでの
-  UAC挙動は未検証。**
+- ~~Windowsのサイレント上書きインストール（`/S`）のperMachine UAC挙動~~ **対応・実機確認完了
+  （2026-11-17）。** per-userは2026-11-16にUAC無し・Avast無反応で成功済み。perMachineは
+  `requireAdministrator`のインストーラーを`Command`（CreateProcess）で非昇格のまま起動すると、
+  UACダイアログが出ないまま`os error 740`（ERROR_ELEVATION_REQUIRED）で失敗する不具合が
+  あったため、`install.rs`の`install_auto`（Windows版）を`ShellExecuteExW`
+  （`lpVerb: "runas"`、`SEE_MASK_NOCLOSEPROCESS`で起動し`WaitForSingleObject`→
+  `GetExitCodeProcess`で終了コードを取得）に書き換えた。Win実機で検証済み：UAC「はい」で
+  `Ok(())`・`C:\Program Files\...`へインストール・`HKLM`のUninstallにも登録、UAC「いいえ」で
+  `Err`（0x800704C7＝ERROR_CANCELLED、拒否と判定可能）。アンインストーラーの昇格実行・
+  レジストリ削除も確認済み（インストール先フォルダが空のまま残るのはelectron-builder側の
+  既知挙動でShelfの不具合ではない、とのこと）。
 - **生成ツール（`shelf/gen/`）のR2アップロード・マニフェスト公開は未検証。**
   mac dmg生成（universalビルド→設定埋め込み→再署名→dmg化）は実機テストで確認済み
   （上記参照）。スキャン→チェックサム抽出→R2アップロード→マニフェスト公開は
   ユニットテストのみ（`project_scan.rs`・`extract.rs`・`r2.rs`・`signing_key.rs`）で、
   実プロジェクト・実R2資格情報・GUI操作込みの通し検証はまだ（ネイティブのファイル選択
   ダイアログがこのセッションでは補助アクセス権限の都合で自動操作できなかったため）。
-- **Windows向けインストーラーからの`setting.sn`抽出（`extract_app_asar_from_nsis_exe`）は
-  実NSISインストーラーでの展開自体は未検証。** 7-Zip自体の検出は修正済み
-  （2026-11-16・Win実機確認：`7z`はPATHに無く`C:\Program Files\7-Zip\7z.exe`に実体がある。
-  `which`はWindowsに存在しないコマンドで、かつ失敗時に即`None`を返す実装バグがあったため、
-  `where`コマンド＋既定インストール先の直接チェックに修正した）。NSISインストーラーを
-  実際に`7z x`で展開してapp.asarが取れるかはまだ未検証。
+- ~~Windows向けインストーラーからの`setting.sn`抽出（`extract_app_asar_from_nsis_exe`）の
+  実NSISインストーラーでの展開~~ **対応・実機確認完了（2026-11-17、Win実機・実配布
+  インストーラー6本で確認）。** 7-Zip自体の検出は修正済み（2026-11-16）。electron-builder製
+  NSISインストーラーは`resources/app.asar`を直下に置かず、`$PLUGINSDIR\app-64.7z`に
+  二重圧縮して入れる構造だった（6本すべて同じ）。一段展開だけを仮定していた実装を、
+  `app-*.7z`を探して二段目を展開する方式に修正（`extract.rs`の
+  `extract_app_asar_from_nsis_exe`）。Win実機で実配布インストーラー6本すべてapp.asarの
+  取り出しに成功（サイズも手作業展開と一致、asarヘッダも確認済み）。
+  - **補足（未対応・優先度低）**: Win実機の検証で使った実インストーラー（sn_kowloon等）では
+    app.asar内に`setting.sn`という名前のファイルが無く、`out/renderer/prj/<フォルダ>/<UUID>.bin`
+    という形で入っていた。`setting_sn_file_name`に渡す名前がこの形式を想定できているかは未確認。
   mac向け（dmg・hdiutil経由）は実装済みだが実インストーラーでの検証はまだ。
 - **Shelf子機（Win/mac）での実ゲーム操作・実際のインストール上書きは未検証。** 第1段階は
   `dev-fixtures/` の偽インストールのみで検証済み（`SHELF_MAC_APPS_DIR`・`SHELF_CONFIG` で実機の
