@@ -20,6 +20,9 @@ pub enum ServerMsg {
     Reset,
     /// 生死確認。受けたら ClientMsg::Pong を返す
     Ping,
+    /// 接続直後に親機から送る、その時点の連番。接続前に配った分を子機が
+    /// 「取りこぼし」として数えないようにするためのもの（それ自体は連番を持たない）
+    Sync { seq: u32 },
 }
 
 impl ServerMsg {
@@ -27,7 +30,7 @@ impl ServerMsg {
     pub fn seq(&self) -> Option<u32> {
         match self {
             ServerMsg::Click { seq, .. } | ServerMsg::Key { seq, .. } => Some(*seq),
-            ServerMsg::Reset | ServerMsg::Ping => None,
+            ServerMsg::Reset | ServerMsg::Ping | ServerMsg::Sync { .. } => None,
         }
     }
 }

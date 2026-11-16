@@ -32,3 +32,7 @@ rand = "0.8"
 # patch_gen_gui の実装方針を踏襲）
 aws-sdk-s3 = "1"
 shelf_core = { path = "../../core" }
+# crypto:trueプロジェクトのsettingSnFileName自動計算（uuidv5）に使う。旧ツール（TS側）の
+# `v5(relPath, pass)`と同じRFC4122 UUIDv5アルゴリズムで、実データで一致を確認済み
+# （2026-11-17、project_scan.rs参照）
+uuid = { version = "1", features = ["v5"] }

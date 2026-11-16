@@ -14,6 +14,47 @@ pub struct ProjectScanResult {
 	pub crypto: bool,
 	pub icon_png_base64: Option<String>,
 	pub warnings: Vec<String>,
+	/// crypto:trueプロジェクトでsetting.snの暗号化後ファイル名を自動計算できた場合のみSome。
+	/// 計算できなくても手入力に倒れるだけで実害は無い（誤った名前を渡しても、後段の
+	/// asar内ファイル検索が見つからずエラーになるだけで、静かに誤った結果にはならない）。
+	pub setting_sn_file_name_guess: Option<String>,
+}
+
+/// `doc/prj/<folder>/setting.sn` が1件だけ見つかれば、その`<folder>/setting.sn`を返す。
+/// 0件・複数件なら自動判定しない（どちらが本体か決め打ちできないため）。
+fn find_setting_sn_rel_path(project_folder: &Path) -> Option<String> {
+	let prj_dir = project_folder.join("doc/prj");
+	let mut found: Option<String> = None;
+	for entry in std::fs::read_dir(&prj_dir).ok()?.filter_map(|e| e.ok()) {
+		let path = entry.path();
+		if !path.is_dir() { continue; }
+		if !path.join("setting.sn").is_file() { continue; }
+		if found.is_some() { return None; }
+		let folder_name = path.file_name()?.to_str()?.to_string();
+		found = Some(format!("{folder_name}/setting.sn"));
+	}
+	found
+}
+
+/// プロジェクト直下の`pass.json`（旧ツールの`IDecryptInfo`形式）から`pass`フィールドを読む。
+/// この値自体がUUID形式の文字列で、uuidv5のnamespace引数としてそのまま使われる
+/// （`Encryptor.ts`の`uuidv5(d) { return v5(d, this.hPass.pass) }`参照）。
+fn read_project_pass(project_folder: &Path) -> Option<uuid::Uuid> {
+	let bytes = std::fs::read(project_folder.join("pass.json")).ok()?;
+	let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+	let pass = value.get("pass")?.as_str()?;
+	uuid::Uuid::parse_str(pass).ok()
+}
+
+/// crypto:trueプロジェクトの、暗号化後のsetting.snファイル名を計算する。
+/// アルゴリズムは`uuidv5(relPath, pass) + ".sn"`（BlueSNovelではなくSKYNovelの場合、
+/// 拡張子はそのまま保持される）。実際のプロジェクト・実際の配布物で一致することを
+/// 確認済み（2026-11-17）。`doc/prj`・`pass.json`のどちらかが欠けていれば計算しない。
+fn guess_setting_sn_file_name(project_folder: &Path) -> Option<String> {
+	let rel_path = find_setting_sn_rel_path(project_folder)?;
+	let namespace = read_project_pass(project_folder)?;
+	let id = uuid::Uuid::new_v5(&namespace, rel_path.as_bytes());
+	Some(format!("{id}.sn"))
 }
 
 fn read_package_json(project_folder: &Path) -> Option<serde_json::Value> {
@@ -49,6 +90,9 @@ pub fn scan_project_folder(project_folder: &Path) -> ProjectScanResult {
 
 	result.crypto = project_folder.join("doc_crypto/prj").is_dir()
 		|| project_folder.join("doc/crypto_prj").is_dir();
+	if result.crypto {
+		result.setting_sn_file_name_guess = guess_setting_sn_file_name(project_folder);
+	}
 
 	// electron-builderの既定規約（build/icon.png）。無くても致命的ではないので警告のみ
 	let icon_path = project_folder.join("build/icon.png");
@@ -228,6 +272,38 @@ mod tests {
 		let result = build_os_scan_result(files);
 		assert_eq!(result.latest, Some("prod.exe".to_string()));
 		assert_eq!(result.past, vec!["trial.exe".to_string()]);
+	}
+
+	#[test]
+	fn guess_setting_sn_file_name_matches_real_build_output() {
+		// 実プロジェクト（大阪九龍条、doc/prj/theme/setting.sn・pass.json使用）と実配布物
+		// （app.asar）の両方で2026-11-17に実測した既知の対応関係。uuidv5(pass, relPath)の
+		// アルゴリズム自体の確認・回帰防止のためのテスト（実ファイルには依存しない）。
+		let dir = std::env::temp_dir().join(format!("shelf_gen_test_setting_sn_{}", std::process::id()));
+		std::fs::create_dir_all(dir.join("doc/prj/theme")).unwrap();
+		std::fs::write(dir.join("doc/prj/theme/setting.sn"), b"dummy").unwrap();
+		std::fs::write(dir.join("pass.json"), r#"{"pass":"9181f017-4c2d-4b47-ba1c-90a30b85494d"}"#).unwrap();
+
+		assert_eq!(
+			guess_setting_sn_file_name(&dir),
+			Some("3b0bb3e8-deff-5722-94d5-885d9cb5fd0e.sn".to_string()),
+		);
+
+		std::fs::remove_dir_all(&dir).unwrap();
+	}
+
+	#[test]
+	fn guess_setting_sn_file_name_gives_up_when_rel_path_is_ambiguous() {
+		let dir = std::env::temp_dir().join(format!("shelf_gen_test_setting_sn_ambiguous_{}", std::process::id()));
+		std::fs::create_dir_all(dir.join("doc/prj/theme")).unwrap();
+		std::fs::create_dir_all(dir.join("doc/prj/script")).unwrap();
+		std::fs::write(dir.join("doc/prj/theme/setting.sn"), b"dummy").unwrap();
+		std::fs::write(dir.join("doc/prj/script/setting.sn"), b"dummy").unwrap();
+		std::fs::write(dir.join("pass.json"), r#"{"pass":"9181f017-4c2d-4b47-ba1c-90a30b85494d"}"#).unwrap();
+
+		assert_eq!(guess_setting_sn_file_name(&dir), None);
+
+		std::fs::remove_dir_all(&dir).unwrap();
 	}
 
 	#[test]

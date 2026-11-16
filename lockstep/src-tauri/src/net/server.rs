@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,12 +33,27 @@ pub struct ClientInfo {
 pub struct Host {
     pub tx: broadcast::Sender<ServerMsg>,
     clients: Mutex<HashMap<u64, ClientInfo>>,
+    /// 親機が配った連番の最新値。新規接続した子機へ`ServerMsg::Sync`で伝え、
+    /// 接続前に配った分を「取りこぼし」として数えさせないために使う。
+    seq: AtomicU32,
 }
 
 impl Host {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self { tx, clients: Mutex::new(HashMap::new()) }
+        Self { tx, clients: Mutex::new(HashMap::new()), seq: AtomicU32::new(0) }
+    }
+
+    pub fn next_seq(&self) -> u32 {
+        self.seq.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_seq(&self) -> u32 {
+        self.seq.load(Ordering::SeqCst)
+    }
+
+    pub fn reset_seq(&self) {
+        self.seq.store(0, Ordering::SeqCst);
     }
 
     fn emit_clients(&self, app: &AppHandle) {
@@ -80,7 +96,14 @@ async fn serve(app: AppHandle, host: Arc<Host>, stream: TcpStream, id: u64) {
         return;
     };
     let (mut sink, mut stream) = ws.split();
+    // 購読前の値を送ることで、購読後に届く最初の操作との間に二重計上の隙間ができないようにする
+    let sync_seq = host.current_seq();
     let mut rx = host.tx.subscribe();
+    if let Ok(text) = serde_json::to_string(&ServerMsg::Sync { seq: sync_seq }) {
+        if sink.send(Message::Text(text.into())).await.is_err() {
+            return;
+        }
+    }
     let mut ping_timer = tokio::time::interval(PING_INTERVAL);
     ping_timer.tick().await; // 最初のtickは即座に来るので読み捨てる
     let mut last_pong = Instant::now();

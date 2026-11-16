@@ -67,7 +67,7 @@ pub fn apply(
             injector.click_in_rect(rect, *x, *y, *button).map_err(Failure::Inject)?;
         }
         ServerMsg::Key { code, .. } => injector.tap(code).map_err(Failure::Inject)?,
-        ServerMsg::Reset | ServerMsg::Ping => {}
+        ServerMsg::Reset | ServerMsg::Ping | ServerMsg::Sync { .. } => {}
     }
     Ok(needs_focus)
 }

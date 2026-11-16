@@ -21,6 +21,15 @@ impl Stats {
         *self = Self::new();
     }
 
+    /// 接続直後、親機が既に振っている連番に合わせて次に受け取るべき連番を初期化する。
+    /// 接続前に親機が送っていた分との差を「取りこぼし」として数えないようにするため
+    /// （ok/fail/missedの累積自体は変えない。接続前の分はそもそも受け取りようがなかった操作）。
+    pub fn sync_to(&mut self, seq: u32) {
+        if seq + 1 > self.expected_next {
+            self.expected_next = seq + 1;
+        }
+    }
+
     /// 操作 seq の適用結果を積算する。期待していた連番より先に進んでいれば、
     /// その間に来るはずだった操作を取りこぼしとして数える。
     /// 連番が巻き戻っていたら（親機の再起動・数え直しで seq が 1 から振り直された場合）、
@@ -117,5 +126,28 @@ mod tests {
         assert_eq!(s.fail, 0);
         assert_eq!(s.missed, 0);
         assert_eq!(s.first_fail_seq, None);
+    }
+
+    #[test]
+    fn sync_to_avoids_counting_pre_connection_ops_as_missed() {
+        // 子機が接続する前に親機が既に8手進めていた場合、接続直後に届くSyncで
+        // 初期化しておけば、次に届く最初の操作（seq=9）を取りこぼしとして数えない
+        let mut s = Stats::new();
+        s.sync_to(8);
+        s.record(9, None);
+        assert_eq!(s.ok, 1);
+        assert_eq!(s.missed, 0);
+    }
+
+    #[test]
+    fn sync_to_does_not_move_expected_next_backwards() {
+        // 既に先へ進んでいる状態で古いSync（再接続のタイミング競合等）が来ても後退させない
+        let mut s = Stats::new();
+        s.record(1, None);
+        s.record(2, None);
+        s.sync_to(0);
+        s.record(3, None);
+        assert_eq!(s.ok, 3);
+        assert_eq!(s.missed, 0);
     }
 }

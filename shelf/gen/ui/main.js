@@ -107,6 +107,14 @@ function renderApp(app) {
 		node.querySelector('.projectFolder').value = path;
 		node.querySelector('.appDisplayName').textContent = app.displayName || app.appId;
 		node.querySelector('.cryptoNotice').hidden = !app.crypto;
+		if (scan.settingSnFileNameGuess) {
+			app.settingSnFileName = scan.settingSnFileNameGuess;
+			node.querySelector('.settingSnFileName').value = scan.settingSnFileNameGuess;
+			node.querySelector('.settingSnGuessNotice').hidden = false;
+		}
+		else {
+			node.querySelector('.settingSnGuessNotice').hidden = true;
+		}
 		node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
 		if (!app.appId) node.querySelector('.appId').value = app.appId;
 		if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;

@@ -5,7 +5,7 @@ mod platform;
 mod protocol;
 mod stats;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,7 +26,6 @@ const REFOCUS_DELAY: Duration = Duration::from_millis(80);
 struct AppState {
     host: Arc<Host>,
     is_host: AtomicBool,
-    seq: AtomicU32,
     target: Mutex<Option<WindowInfo>>,
     /// 注入スレッドへの操作キュー。親機のローカル注入も子機の受信も同じキューに積む
     jobs: Mutex<Sender<ServerMsg>>,
@@ -104,7 +103,7 @@ async fn start_host(app: AppHandle, state: tauri::State<'_, AppState>) -> Result
 }
 
 fn host_send(state: &AppState, make: impl FnOnce(u32) -> ServerMsg) -> u32 {
-    let seq = state.seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let seq = state.host.next_seq();
     let msg = make(seq);
     let _ = state.host.tx.send(msg.clone());
     let _ = state.jobs.lock().unwrap().send(msg);
@@ -125,7 +124,7 @@ fn host_key(state: tauri::State<'_, AppState>, code: String) -> u32 {
 /// 全機（親機自身も含む）の成功・失敗・取りこぼしの集計をクリアし、連番を1から数え直す。
 #[tauri::command]
 fn host_reset(app: AppHandle, state: tauri::State<'_, AppState>) {
-    state.seq.store(0, Ordering::SeqCst);
+    state.host.reset_seq();
     let _ = state.host.tx.send(ServerMsg::Reset);
     let _ = state.jobs.lock().unwrap().send(ServerMsg::Reset);
     state.host.reset_clients(&app);
@@ -175,6 +174,10 @@ fn run_injector(app: AppHandle, jobs: Receiver<ServerMsg>) {
             continue;
         }
         if matches!(msg, ServerMsg::Ping) {
+            continue;
+        }
+        if let ServerMsg::Sync { seq } = msg {
+            stats.sync_to(seq);
             continue;
         }
 
@@ -236,7 +239,6 @@ pub fn run() {
         .manage(AppState {
             host: Arc::new(Host::new()),
             is_host: AtomicBool::new(false),
-            seq: AtomicU32::new(0),
             target: Mutex::new(None),
             jobs: Mutex::new(jobs_tx),
             client_out: Mutex::new(None),

@@ -112,8 +112,13 @@
 					<input type="text" class="settingSnFileName" value="setting.sn" />
 				</label>
 				<p class="cryptoNotice hint" hidden>
-					このプロジェクトは crypto:true です。setting.sn のファイル名は自動計算できないため、
-					手動で入力してください（詳細は docs/manual.md 参照）。
+					このプロジェクトは crypto:true です。setting.sn のファイル名は暗号化されて
+					変わります（詳細は docs/manual.md 参照）。
+				</p>
+				<p class="settingSnGuessNotice hint" hidden>
+					上記は自動計算した推定値です（doc/prj配下に setting.sn が1つだけ・
+					pass.json がある場合のみ）。過去出荷インストーラーからの抽出に失敗する場合は、
+					実際のapp.asarを確認のうえ手入力してください。
 				</p>
 				<label>過去出荷インストーラー（複数可）
 					<button type="button" class="btnPickLegacyInstallers">選択して追加</button>
