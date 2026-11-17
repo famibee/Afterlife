@@ -1,9 +1,11 @@
 // Shelfのビルド。成果物を shelf/dist-local/ へコピーする（OSごとに作るものが違う）。
 // 使い方: node scripts/build.mjs gen|app   （package.jsonの gen:build / app:build から呼ぶ）
 //
-// mac: universalでビルドし、dmgをコピーする。gen と app の dmg は同じ
-//      target/universal-apple-darwin/release/bundle/dmg/ に出るため、片方をビルドすると
-//      もう片方が消える。ビルドのたびに dist-local/ へ退避して残す。
+// mac: universalでビルドする。コピーするのは app（ランチャーのスタブ単体のdmg。動作確認用）だけ。
+//      gen（生成ツール）はこのリポジトリが手元にあるMacでしか動かず、配布物にならないので
+//      コピーしない（普段は `bun run gen:dev` で足りる。ビルドしたappはtarget/内に残る）。
+//      gen と app の dmg は同じ target/universal-apple-darwin/release/bundle/dmg/ に出るため、
+//      片方をビルドするともう片方が消える点に注意（appはdist-localへ退避して残す）。
 // Win: app（ランチャーのスタブ）だけ。生成ツール（gen）はmac専用（hdiutil等を使う）。
 //      target/release/shelf.exe を dist-local/shelf.exe にコピーする。これを
 //      gen/prebuilt/x86_64-pc-windows-msvc/shelf.exe に置く（blues-sync経由でmacへ）。
@@ -48,21 +50,25 @@ if (r.status !== 0) process.exit(r.status ?? 1);
 const out = join(root, 'dist-local');
 mkdirSync(out, { recursive: true });
 const copied = [];
-if (isMac) {
+if (isMac && target === 'app') {
 	const dmgDir = join(root, 'target', 'universal-apple-darwin', 'release', 'bundle', 'dmg');
-	const prefix = target === 'gen' ? 'Shelf生成ツール_' : 'Shelf_';
+	const prefix = 'Shelf_';
 	for (const f of readdirSync(dmgDir)) {
 		if (f.startsWith(prefix) && f.endsWith('_universal.dmg')) {
 			copyFileSync(join(dmgDir, f), join(out, f));
 			copied.push(f);
 		}
 	}
-} else {
+} else if (isWin) {
 	const exe = join(root, 'target', 'release', 'shelf.exe');
 	if (existsSync(exe)) {
 		copyFileSync(exe, join(out, 'shelf.exe'));
 		copied.push('shelf.exe');
 	}
+}
+if (copied.length === 0 && target === 'gen') {
+	console.log('生成ツールのビルド完了（dist-localへのコピーなし）。target/ 内の .app / .dmg を参照');
+	process.exit(0);
 }
 if (copied.length === 0) {
 	console.error('成果物が見つかりません（ビルド出力の場所を確認してください）');
