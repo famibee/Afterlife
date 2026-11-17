@@ -97,28 +97,7 @@ function renderApp(app) {
 	node.querySelector('.btnPickProject').addEventListener('click', async () => {
 		const path = await invoke('select_folder');
 		if (!path) return;
-		app.projectFolder = path;
-		const scan = await invoke('scan_project_folder', {path});
-		app.displayName = app.displayName || scan.appName;
-		app.appId = app.appId || scan.appSlug;
-		app.appSlug = scan.appSlug;
-		app.crypto = scan.crypto;
-		app.iconPngBase64 = scan.iconPngBase64 || '';
-		node.querySelector('.projectFolder').value = path;
-		node.querySelector('.appDisplayName').textContent = app.displayName || app.appId;
-		node.querySelector('.cryptoNotice').hidden = !app.crypto;
-		if (scan.settingSnFileNameGuess) {
-			app.settingSnFileName = scan.settingSnFileNameGuess;
-			node.querySelector('.settingSnFileName').value = scan.settingSnFileNameGuess;
-			node.querySelector('.settingSnGuessNotice').hidden = false;
-		}
-		else {
-			node.querySelector('.settingSnGuessNotice').hidden = true;
-		}
-		node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
-		if (!app.appId) node.querySelector('.appId').value = app.appId;
-		if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;
-		scheduleSaveState();
+		await applyProjectFolder(app, node, path);
 	});
 
 	node.querySelector('.btnPickLegacyInstallers').addEventListener('click', async () => {
@@ -144,6 +123,31 @@ function renderApp(app) {
 	}
 
 	return node;
+}
+
+async function applyProjectFolder(app, node, path) {
+	app.projectFolder = path;
+	const scan = await invoke('scan_project_folder', {path});
+	app.displayName = app.displayName || scan.appName;
+	app.appId = app.appId || scan.appSlug;
+	app.appSlug = scan.appSlug;
+	app.crypto = scan.crypto;
+	app.iconPngBase64 = scan.iconPngBase64 || '';
+	node.querySelector('.projectFolder').value = path;
+	node.querySelector('.appDisplayName').textContent = app.displayName || app.appId;
+	node.querySelector('.cryptoNotice').hidden = !app.crypto;
+	if (scan.settingSnFileNameGuess) {
+		app.settingSnFileName = scan.settingSnFileNameGuess;
+		node.querySelector('.settingSnFileName').value = scan.settingSnFileNameGuess;
+		node.querySelector('.settingSnGuessNotice').hidden = false;
+	}
+	else {
+		node.querySelector('.settingSnGuessNotice').hidden = true;
+	}
+	node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
+	if (!app.appId) node.querySelector('.appId').value = app.appId;
+	if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;
+	scheduleSaveState();
 }
 
 async function extractChecksumFor(path, settingSnFileName) {
@@ -477,3 +481,51 @@ async function loadInitialState() {
 }
 
 loadInitialState();
+
+// --- ドラッグ＆ドロップ ---
+// Tauri（WebView）はドロップされたファイルのパスをDOMのdropイベントでは渡さないため、
+// ウィンドウ側のonDragDropEventを使う。ドロップ位置のカードを探して振り分ける:
+// フォルダ（.dmg/.exe以外）=プロジェクトフォルダ／.dmg/.exe: 最新版ペイン上=その版、それ以外=旧版インストーラー
+function cardAt(position) {
+	const ratio = window.devicePixelRatio || 1;
+	const el = document.elementFromPoint(position.x / ratio, position.y / ratio);
+	const card = el && el.closest('.app-card');
+	if (!card) return null;
+	for (const [id, node] of appCardNodes) {
+		if (node === card || node.contains(card)) return {app: apps.find((a) => a.id === id), node, el};
+	}
+	return null;
+}
+
+function setDragHighlight(position) {
+	document.querySelectorAll('.app-card.dragover').forEach((c) => c.classList.remove('dragover'));
+	if (!position) return;
+	const hit = cardAt(position);
+	if (hit) hit.el.closest('.app-card').classList.add('dragover');
+}
+
+window.__TAURI__.webviewWindow.getCurrentWebviewWindow().onDragDropEvent(async (event) => {
+	const p = event.payload;
+	if (p.type === 'over') { setDragHighlight(p.position); return; }
+	setDragHighlight(null);
+	if (p.type !== 'drop') return;
+	const hit = cardAt(p.position);
+	if (!hit || !hit.app) return;
+	const {app, node, el} = hit;
+	try {
+		const isInstaller = (x) => /\.(dmg|exe)$/i.test(x);
+		const folders = p.paths.filter((x) => !isInstaller(x));
+		const installers = p.paths.filter(isInstaller);
+		if (folders.length > 0) await applyProjectFolder(app, node, folders[0]);
+		const pane = el.closest('.os-pane');
+		for (const path of installers) {
+			const os = path.toLowerCase().endsWith('.dmg') ? 'mac' : 'win';
+			if (pane && pane.dataset.os === os) await setLatestInstaller(app, os, path, node);
+			else if (!pane) await addLegacyInstaller(app, path, node);
+		}
+		scheduleSaveState();
+	}
+	catch (e) {
+		alert(`ドロップの処理に失敗しました：${e}`);
+	}
+});

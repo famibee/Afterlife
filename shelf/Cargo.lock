@@ -4081,6 +4081,7 @@ dependencies = [
  "shelf_core",
  "tauri",
  "tauri-build",
+ "tauri-plugin-dialog",
 ]
 
 [[package]]

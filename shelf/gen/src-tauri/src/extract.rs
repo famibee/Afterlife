@@ -189,4 +189,19 @@ mod tests {
 		let result = extract_app_asar_from_nsis_exe(Path::new("/no/such/installer.exe"));
 		assert!(result.is_err());
 	}
+
+	/// 実配布dmgでの抽出確認（手動）。
+	/// `SHELF_TEST_DMG=<dmg> SHELF_TEST_SETTING_SN=<名前> cargo test -p shelf_gen -- --ignored real_dmg`
+	#[test]
+	#[ignore]
+	fn real_dmg_extracts_setting_sn() {
+		let dmg = std::env::var("SHELF_TEST_DMG").expect("SHELF_TEST_DMG");
+		let name = std::env::var("SHELF_TEST_SETTING_SN").expect("SHELF_TEST_SETTING_SN");
+		let asar = extract_app_asar_from_dmg(Path::new(&dmg)).expect("app.asar");
+		eprintln!("app.asar: {} bytes", asar.len());
+		let mut cursor = std::io::Cursor::new(asar);
+		let sn = shelf_core::asar::extract_from_reader(&mut cursor, &name).expect("setting.sn");
+		eprintln!("setting.sn: {} bytes", sn.len());
+		assert!(!sn.is_empty());
+	}
 }

@@ -135,3 +135,4 @@ table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 
 .generate-settings { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.app-card.dragover { outline: 2px dashed #4a90d9; outline-offset: -2px; }

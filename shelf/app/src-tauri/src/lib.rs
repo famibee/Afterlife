@@ -6,6 +6,7 @@ use shelf_core::{config, detect, inspect, install, launch, manifest, status};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 struct AppState {
 	config: config::EmbeddedConfig,
@@ -219,15 +220,27 @@ async fn install_update(app: AppHandle, state: tauri::State<'_, AppState>, app_i
 /// 確かめるのは「過去に正規購入した証拠が出せるか」だけで、現在インストールされている
 /// ものの真正性までは証明しない。利用者には結果だけダイアログで伝える
 #[tauri::command]
-fn pick_legacy_installer(state: tauri::State<'_, AppState>, app_id: String) -> Result<String, String> {
-	let entry = state.config.apps.iter().find(|a| a.app_id == app_id)
-		.ok_or_else(|| "不明なアプリIDです".to_string())?;
-
-	let Some(path) = shelf_core::dialog::pick_installer_file(&entry.app_name).map_err(|e| e.to_string())? else {
-		return Ok("cancelled".to_string());
+async fn pick_legacy_installer(app: tauri::AppHandle, state: tauri::State<'_, AppState>, app_id: String) -> Result<String, String> {
+	let (app_name, checksums) = {
+		let entry = state.config.apps.iter().find(|a| a.app_id == app_id)
+			.ok_or_else(|| "不明なアプリIDです".to_string())?;
+		(entry.app_name.clone(), entry.checksum_installer.clone())
 	};
 
-	let matched = inspect::verify_legacy_installer(&path, &entry.checksum_installer)
+	// フォアグラウンドのアプリ自身が出す標準ダイアログ（旧osascript方式は、バックグラウンドの
+	// 別プロセスが出すダイアログがキーボードフォーカスを取れない問題があった）
+	let ext = if cfg!(target_os = "macos") { "dmg" } else { "exe" };
+	let (tx, rx) = std::sync::mpsc::channel();
+	app.dialog().file()
+		.set_title(format!("{app_name} の旧バージョンのインストーラー（.{ext}）を選択してください"))
+		.add_filter("インストーラー", &[ext])
+		.pick_file(move |result| { let _ = tx.send(result); });
+	let Some(file) = rx.recv().ok().flatten() else {
+		return Ok("cancelled".to_string());
+	};
+	let path = file.into_path().map_err(|e| e.to_string())?;
+
+	let matched = inspect::verify_legacy_installer(&path, &checksums)
 		.map_err(|e| e.to_string())?;
 	Ok(if matched { "confirmed".to_string() } else { "mismatch".to_string() })
 }
@@ -244,6 +257,7 @@ fn open_url(url: String) -> Result<(), String> {
 
 pub fn run() {
 	tauri::Builder::default()
+		.plugin(tauri_plugin_dialog::init())
 		.setup(|app| {
 			let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
 			let config = config::load(&exe_path).map_err(|e| e.to_string())?;
