@@ -260,7 +260,21 @@ pub fn run() {
 		.plugin(tauri_plugin_dialog::init())
 		.setup(|app| {
 			let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-			let config = config::load(&exe_path).map_err(|e| e.to_string())?;
+			let config = match config::load(&exe_path) {
+				Ok(c) => c,
+				Err(e) => {
+					// 設定を埋め込む前のスタブを直接開いた場合など。panicで落とさず理由を示して終了する
+					let handle = app.handle().clone();
+					for w in app.webview_windows().values() { let _ = w.hide(); }
+					app.dialog().message(format!(
+						"このランチャーには設定が埋め込まれていません（{e}）。\n\
+						 生成ツール（shelf/gen）で作った配布物を使ってください。"))
+						.title("Shelf")
+						.kind(tauri_plugin_dialog::MessageDialogKind::Error)
+						.show(move |_| handle.exit(1));
+					return Ok(());
+				}
+			};
 			app.manage(AppState { config, manifest: Mutex::new(None) });
 			Ok(())
 		})

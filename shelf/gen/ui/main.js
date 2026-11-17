@@ -15,7 +15,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
 
 // --- 状態 ---
 let circle = {name: '', siteUrl: '', supportUrl: '', email: ''};
-let genSettings = {launcherName: '', manifestUrl: '', manualUrl: '', outputDir: '', volumeName: '', uploadLaunchers: false};
+let genSettings = {launcherName: '', manifestUrl: '', manualUrl: '', outputDir: '', volumeName: '', uploadLaunchers: false, launcherIconPath: ''};
 let apps = [];	// 各要素は下のappCardNodes.get(id)のDOMノードと対になる
 let appCounter = 0;
 const appCardNodes = new Map();	// id -> DOMノード
@@ -270,6 +270,19 @@ $('btnPickOutputDir').addEventListener('click', async () => {
 	scheduleSaveState();
 });
 
+$('btnPickLauncherIcon').addEventListener('click', async () => {
+	const path = await invoke('select_image_file');
+	if (!path) return;
+	genSettings.launcherIconPath = path;
+	$('launcherIconPath').value = path;
+	scheduleSaveState();
+});
+$('btnClearLauncherIcon').addEventListener('click', () => {
+	genSettings.launcherIconPath = '';
+	$('launcherIconPath').value = '';
+	scheduleSaveState();
+});
+
 for (const [id, key] of [['launcherName', 'launcherName'], ['manifestUrl', 'manifestUrl'], ['manualUrl', 'manualUrl'], ['volumeName', 'volumeName']]) {
 	$(id).addEventListener('input', () => { genSettings[key] = $(id).value; scheduleSaveState(); });
 }
@@ -317,6 +330,7 @@ $('btnGenerate').addEventListener('click', async () => {
 			manualUrl: genSettings.manualUrl,
 			circle,
 			outputDir: genSettings.outputDir,
+			launcherIconPath: genSettings.launcherIconPath || null,
 			volumeName: genSettings.volumeName || genSettings.launcherName || 'Shelf',
 			apps: apps.map((a) => ({
 				appId: a.appId,
@@ -457,6 +471,7 @@ async function loadInitialState() {
 		$('outputDir').value = genSettings.outputDir || '';
 		$('volumeName').value = genSettings.volumeName || '';
 		$('uploadLaunchers').checked = !!genSettings.uploadLaunchers;
+		$('launcherIconPath').value = genSettings.launcherIconPath || '';
 
 		for (const saved of state.apps || []) {
 			addAppCard(saved);

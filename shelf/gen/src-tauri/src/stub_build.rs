@@ -68,6 +68,44 @@ fn workspace_target_dir() -> PathBuf {
 	shelf_root().join("target")
 }
 
+/// PNG画像を、.appの`Resources/icon.icns`として差し替える（sips・iconutilはmac標準）。
+/// 署名の前に呼ぶこと。正方形でない画像は短辺基準で中央切り出しではなく、そのまま
+/// 各サイズへ拡縮する（歪むので、呼び出し側で正方形の画像を求めている）。
+pub fn replace_mac_icon(png: &Path, icns_out: &Path) -> Result<(), StubBuildError> {
+	static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+	let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+	let work = std::env::temp_dir().join(format!("shelf_gen_icon_{}_{seq}", std::process::id()));
+	let _ = std::fs::remove_dir_all(&work);
+	let iconset = work.join("icon.iconset");
+	std::fs::create_dir_all(&iconset)?;
+	let result = (|| -> Result<(), StubBuildError> {
+		for (name, px) in [
+			("icon_16x16", 16), ("icon_16x16@2x", 32), ("icon_32x32", 32), ("icon_32x32@2x", 64),
+			("icon_128x128", 128), ("icon_128x128@2x", 256), ("icon_256x256", 256),
+			("icon_256x256@2x", 512), ("icon_512x512", 512), ("icon_512x512@2x", 1024),
+		] {
+			let status = Command::new("/usr/bin/sips")
+				.args(["-s", "format", "png", "-z", &px.to_string(), &px.to_string()])
+				.arg(png).arg("--out").arg(iconset.join(format!("{name}.png")))
+				.output()?;
+			if !status.status.success() {
+				return Err(StubBuildError::BuildFailed(format!(
+					"アイコン画像の変換に失敗した（PNG画像か確認してください）: {}",
+					String::from_utf8_lossy(&status.stderr).trim())));
+			}
+		}
+		let out = Command::new("/usr/bin/iconutil")
+			.args(["-c", "icns"]).arg(&iconset).arg("-o").arg(icns_out).output()?;
+		if !out.status.success() {
+			return Err(StubBuildError::BuildFailed(format!(
+				"iconutilによるicns作成に失敗した: {}", String::from_utf8_lossy(&out.stderr).trim())));
+		}
+		Ok(())
+	})();
+	let _ = std::fs::remove_dir_all(&work);
+	result
+}
+
 /// mac向けuniversal2バイナリの.appを`shelf/app`でビルドする。生成のたびに毎回ビルドし直す
 /// （stubのスキーマずれ事故を構造的に防ぐ、という旧ツールの教訓を踏襲）。
 ///
@@ -154,6 +192,7 @@ pub fn stamp_and_resign_mac_app(
 	config_json: &str,
 	volume_name: &str,
 	out_dmg: &Path,
+	icon_png: Option<&Path>,
 ) -> Result<(), StubBuildError> {
 	let work_dir = std::env::temp_dir().join(format!("shelf_gen_stamp_{}", std::process::id()));
 	std::fs::create_dir_all(&work_dir)?;
@@ -168,6 +207,9 @@ pub fn stamp_and_resign_mac_app(
 
 		let resources = out_app.join("Contents/Resources");
 		std::fs::write(resources.join("shelf-config.json"), config_json)?;
+		if let Some(png) = icon_png {
+			replace_mac_icon(png, &resources.join("icon.icns"))?;
+		}
 
 		let codesign = Command::new("/usr/bin/codesign")
 			.args(["-s", "-", "--force", "--deep"])
@@ -205,13 +247,35 @@ pub fn find_win_prebuilt_exe() -> Option<PathBuf> {
 }
 
 /// Winのstub exeの末尾に設定JSONを連結する（shelf_core::footer参照）
-pub fn stamp_win_exe(stub_exe: &Path, config_json: &str, out_exe: &Path) -> io::Result<()> {
-	let stub_bytes = std::fs::read(stub_exe)?;
+pub fn stamp_win_exe(stub_exe: &Path, config_json: &str, out_exe: &Path, icon_png: Option<&Path>) -> io::Result<()> {
+	let mut stub_bytes = std::fs::read(stub_exe)?;
+	if let Some(png) = icon_png {
+		// リソース（アイコン）の書き換えは、フッターを付ける前のexeに対して行う
+		// （PEとして解釈できる状態でないと書き換えられない）
+		stub_bytes = replace_win_icon(&stub_bytes, png)?;
+	}
 	let stamped = shelf_core::footer::append_footer(&stub_bytes, config_json);
 	if let Some(parent) = out_exe.parent() {
 		std::fs::create_dir_all(parent)?;
 	}
 	std::fs::write(out_exe, stamped)
+}
+
+/// exeのメインアイコンをPNG画像で差し替えたバイト列を返す（editpe。PNGは標準サイズへ縮小される）。
+pub fn replace_win_icon(exe_bytes: &[u8], png: &Path) -> io::Result<Vec<u8>> {
+	let to_io = |m: String| io::Error::new(io::ErrorKind::InvalidData, m);
+	let mut image = editpe::Image::parse(exe_bytes.to_vec())
+		.map_err(|e| to_io(format!("stub exeをPEとして解析できない: {e:?}")))?;
+	let mut resources = image.resource_directory().cloned().unwrap_or_default();
+	let path = png.to_str().ok_or_else(|| to_io("アイコン画像のパスが不正".to_string()))?;
+	resources.set_main_icon_file(path)
+		.map_err(|e| to_io(format!("アイコン画像を読み込めない（PNG画像か確認してください）: {e:?}")))?;
+	image.set_resource_directory(resources)
+		.map_err(|e| to_io(format!("exeへのアイコン書き込みに失敗: {e:?}")))?;
+	let mut out = Vec::new();
+	image.write_writer(&mut out)
+		.map_err(|e| to_io(format!("exeの書き出しに失敗: {e:?}")))?;
+	Ok(out)
 }
 
 #[cfg(test)]
@@ -227,7 +291,7 @@ mod tests {
 		let out_path = dir.join("out.exe");
 
 		let config_json = r#"{"schema":1,"apps":[]}"#;
-		stamp_win_exe(&stub_path, config_json, &out_path).unwrap();
+		stamp_win_exe(&stub_path, config_json, &out_path, None).unwrap();
 
 		let out_bytes = std::fs::read(&out_path).unwrap();
 		assert_eq!(shelf_core::footer::extract_trailing_json(&out_bytes).as_deref(), Some(config_json));
@@ -247,7 +311,7 @@ mod tests {
 		let out_dmg = dir.join("TestLauncher.dmg");
 		let config_json = r#"{"schema":1,"launcherName":"テスト","manifestUrl":"file:///tmp/manifest.json","manifestPublicKey":"","manualUrl":"","apps":[]}"#;
 
-		stamp_and_resign_mac_app(&app_template, config_json, "TestLauncher", &out_dmg)
+		stamp_and_resign_mac_app(&app_template, config_json, "TestLauncher", &out_dmg, None)
 			.expect("stamp_and_resign_mac_appに失敗");
 		if let Some(dir) = app_template.parent() { let _ = std::fs::remove_dir_all(dir); }
 		assert!(out_dmg.exists());
@@ -279,5 +343,45 @@ mod tests {
 		if !prebuilt.exists() {
 			assert!(find_win_prebuilt_exe().is_none());
 		}
+	}
+
+	fn icon_fixture() -> PathBuf {
+		Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/icon.png")
+	}
+
+	#[test]
+	fn replace_mac_icon_produces_a_valid_icns() {
+		let out = std::env::temp_dir().join(format!("shelf_gen_test_icon_{}.icns", std::process::id()));
+		replace_mac_icon(&icon_fixture(), &out).expect("icns作成に失敗");
+		let bytes = std::fs::read(&out).unwrap();
+		let _ = std::fs::remove_file(&out);
+		assert_eq!(&bytes[..4], b"icns");
+		assert!(bytes.len() > 10_000);
+	}
+
+	#[test]
+	fn replace_mac_icon_rejects_a_non_image() {
+		let dir = std::env::temp_dir().join(format!("shelf_gen_test_icon_bad_{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let bad = dir.join("bad.png");
+		std::fs::write(&bad, b"not an image").unwrap();
+		let err = replace_mac_icon(&bad, &dir.join("o.icns"));
+		let _ = std::fs::remove_dir_all(&dir);
+		assert!(err.is_err());
+	}
+
+	/// 実物のWin stub（gen/prebuilt、無ければスキップ）で、アイコンを差し替えても
+	/// PEとして再解析でき、アイコンのリソースが入ったままであること
+	#[test]
+	fn replace_win_icon_keeps_a_parsable_pe_with_new_icon() {
+		let Some(stub) = find_win_prebuilt_exe() else { eprintln!("Win stubが無いのでスキップ"); return; };
+		let before = std::fs::read(&stub).unwrap();
+		let after = replace_win_icon(&before, &icon_fixture()).expect("アイコン差し替えに失敗");
+		let image = editpe::Image::parse(after.clone()).expect("差し替え後のexeを再解析できない");
+		assert!(image.resource_directory().is_some());
+		assert_ne!(before, after);
+		// フッター付与後も設定が読み戻せる（PE本体の後ろに付く方式との両立）
+		let stamped = shelf_core::footer::append_footer(&after, r#"{"schema":1}"#);
+		assert_eq!(shelf_core::footer::extract_trailing_json(&stamped).as_deref(), Some(r#"{"schema":1}"#));
 	}
 }

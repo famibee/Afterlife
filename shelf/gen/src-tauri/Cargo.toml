@@ -36,3 +36,4 @@ shelf_core = { path = "../../core" }
 # `v5(relPath, pass)`と同じRFC4122 UUIDv5アルゴリズムで、実データで一致を確認済み
 # （2026-11-17、project_scan.rs参照）
 uuid = { version = "1", features = ["v5"] }
+editpe = "0.2"

@@ -3,3 +3,4 @@ node_modules
 *.dmg
 *.exe
 *.msi
+dist-local/

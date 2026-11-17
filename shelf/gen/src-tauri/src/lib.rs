@@ -10,7 +10,7 @@ mod stub_build;
 
 use serde::{Deserialize, Serialize};
 use shelf_core::manifest::{CircleInfo, OsArtifact, StoreInfo};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri_plugin_dialog::DialogExt;
 
@@ -28,6 +28,13 @@ async fn select_installer_files(app: tauri::AppHandle, ext: String) -> Vec<Strin
 	let (tx, rx) = std::sync::mpsc::channel();
 	app.dialog().file().add_filter("インストーラー", &[&ext]).pick_files(move |result| { let _ = tx.send(result); });
 	rx.recv().ok().flatten().unwrap_or_default().into_iter().map(|p| p.to_string()).collect()
+}
+
+#[tauri::command]
+async fn select_image_file(app: tauri::AppHandle) -> Option<String> {
+	let (tx, rx) = std::sync::mpsc::channel();
+	app.dialog().file().add_filter("PNG画像", &["png"]).pick_file(move |result| { let _ = tx.send(result); });
+	rx.recv().ok().flatten().map(|p| p.to_string())
 }
 
 #[tauri::command]
@@ -147,6 +154,9 @@ struct GenerateRequest {
 	circle: CircleInfo,
 	apps: Vec<GenerateAppInput>,
 	output_dir: String,
+	/// ランチャーのアイコン（正方形のPNG画像）。未指定ならスタブ既定のアイコンのまま
+	#[serde(default)]
+	launcher_icon_path: Option<String>,
 	/// mac dmgのボリューム名・出力ファイル名の基準（通例サークル名やランチャー名）
 	volume_name: String,
 }
@@ -222,10 +232,18 @@ fn generate_launchers_blocking(request: GenerateRequest) -> Result<GenerateResul
 	let output_dir = Path::new(&request.output_dir);
 	std::fs::create_dir_all(output_dir).map_err(|e| e.to_string())?;
 
+	let icon_path: Option<PathBuf> = request.launcher_icon_path.as_deref()
+		.filter(|p| !p.is_empty()).map(PathBuf::from);
+	if let Some(p) = &icon_path {
+		if !p.is_file() {
+			return Err(format!("アイコン画像が見つからない: {}", p.display()));
+		}
+	}
+
 	let mac_dmg_path = {
 		let app_template = stub_build::rebuild_mac_universal_app().map_err(|e| e.to_string())?;
 		let out_dmg = output_dir.join(format!("{}.dmg", request.volume_name));
-		let result = stub_build::stamp_and_resign_mac_app(&app_template, &config_json, &request.volume_name, &out_dmg);
+		let result = stub_build::stamp_and_resign_mac_app(&app_template, &config_json, &request.volume_name, &out_dmg, icon_path.as_deref());
 		// app_templateは一時ディレクトリ内（rebuild_mac_universal_appが作ったもの）。
 		// stamp_and_resign_mac_appは複製元として参照するだけで消さないので、ここで片付ける
 		if let Some(dir) = app_template.parent() { let _ = std::fs::remove_dir_all(dir); }
@@ -236,7 +254,7 @@ fn generate_launchers_blocking(request: GenerateRequest) -> Result<GenerateResul
 	let (win_exe_path, win_skipped_reason) = match stub_build::find_win_prebuilt_exe() {
 		Some(stub_exe) => {
 			let out_exe = output_dir.join(format!("{}.exe", request.volume_name));
-			stub_build::stamp_win_exe(&stub_exe, &config_json, &out_exe).map_err(|e| e.to_string())?;
+			stub_build::stamp_win_exe(&stub_exe, &config_json, &out_exe, icon_path.as_deref()).map_err(|e| e.to_string())?;
 			(Some(out_exe.to_string_lossy().to_string()), None)
 		}
 		None => (None, Some(
@@ -262,6 +280,7 @@ pub fn run() {
 			select_folder,
 			select_installer_files,
 			select_single_file,
+			select_image_file,
 			scan_project_folder,
 			scan_build_installers,
 			extract_setting_sn_from_dmg,

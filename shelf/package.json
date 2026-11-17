@@ -6,10 +6,10 @@
   "author": "famibee",
   "scripts": {
     "app:dev": "cd app && tauri dev",
-    "app:build": "cd app && tauri build",
+    "app:build": "node scripts/build.mjs app",
     "app:icon": "cd app && tauri icon",
     "gen:dev": "cd gen && tauri dev",
-    "gen:build": "cd gen && tauri build",
+    "gen:build": "node scripts/build.mjs gen",
     "gen:icon": "cd gen && tauri icon"
   },
   "devDependencies": {
