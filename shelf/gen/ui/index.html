@@ -44,13 +44,11 @@
 				<label>出力フォルダ <input type="text" id="outputDir" readonly />
 					<button type="button" id="btnPickOutputDir">選択</button>
 				</label>
-				<label>ランチャーのアイコン（任意。正方形のPNG、512px以上推奨） <input type="text" id="launcherIconPath" readonly placeholder="未指定（既定の本棚アイコン）" />
-<button type="button" id="btnPickLauncherIcon">選択</button>
-<button type="button" id="btnClearLauncherIcon">解除</button></label>
-<label>ボリューム名（出力ファイル名の基準） <input type="text" id="volumeName" placeholder="例: FamibeeLauncher" /></label>
+				<label title="正方形のPNG、512px以上推奨">アイコン（任意） <input type="text" id="launcherIconPath" readonly placeholder="未指定（既定の本棚アイコン）" />
+					<span class="btnrow"><button type="button" id="btnPickLauncherIcon">選択</button><button type="button" id="btnClearLauncherIcon">解除</button></span></label>
+				<label title="出力ファイル名の基準">ボリューム名 <input type="text" id="volumeName" placeholder="例: FamibeeLauncher（出力ファイル名の基準）" /></label>
 				<label><input type="checkbox" id="uploadLaunchers" /> 生成した配布物（ランチャー本体）もR2へアップロードする
-					（<code>games/</code>とは別の<code>launcher/</code>配下に置く。ゲームの更新用インストーラーの
-					すぐ隣には置かない）
+					<span class="hint">（<code>games/</code>とは別の<code>launcher/</code>配下に置く）</span>
 				</label>
 			</div>
 
@@ -71,7 +69,7 @@
 			<label>バケット <input type="text" id="r2Bucket" placeholder="例: shelf-dist" /></label>
 			<label>Access Key ID <input type="text" id="r2AccessKeyId" /></label>
 			<label>Secret Access Key <input type="password" id="r2SecretAccessKey" /></label>
-			<label>公開ベースURL（任意） <input type="text" id="r2PublicBaseUrl" placeholder="https://pub-xxxxx.r2.dev" /></label>
+			<label>公開ベースURL <input type="text" id="r2PublicBaseUrl" placeholder="https://pub-xxxxx.r2.dev" /></label>
 			<p class="hint">これらの値はこのPC内（アプリ設定フォルダ）に平文で保存されます。</p>
 			<button type="button" id="btnR2Save">保存</button>
 			<span id="r2SaveStatus"></span>
@@ -102,16 +100,16 @@
 			</label>
 			<p class="scanWarnings"></p>
 
-			<label>appId（マニフェスト上の識別子） <input type="text" class="appId" /></label>
+			<label title="マニフェスト上の識別子">appId <input type="text" class="appId" /></label>
 			<label>表示名 <input type="text" class="displayName" /></label>
 			<label>説明 <input type="text" class="summary" /></label>
 			<label><input type="checkbox" class="eventOnly" /> イベント配布のみ（配布サイトへのリンクを出さない）</label>
-			<label>購入/配布先の表示名 <input type="text" class="storeLabel" placeholder="例: DLsite" /></label>
-			<label>購入/配布先URL <input type="text" class="storeUrl" /></label>
+			<label>配布先の表示名 <input type="text" class="storeLabel" placeholder="例: DLsite" /></label>
+			<label>配布先URL <input type="text" class="storeUrl" /></label>
 
 			<fieldset>
 				<legend>購入者チェック</legend>
-				<label>setting.snのファイル名（basename）
+				<label title="basename">setting.snファイル名
 					<input type="text" class="settingSnFileName" value="setting.sn" />
 				</label>
 				<p class="cryptoNotice hint" hidden>
@@ -123,7 +121,7 @@
 					pass.json がある場合のみ）。過去出荷インストーラーからの抽出に失敗する場合は、
 					実際のapp.asarを確認のうえ手入力してください。
 				</p>
-				<label>過去出荷インストーラー（複数可）
+				<label title="複数可">過去出荷版
 					<button type="button" class="btnPickLegacyInstallers">選択して追加</button>
 				</label>
 				<ul class="legacyInstallerList"></ul>
@@ -137,7 +135,7 @@
 				</label>
 				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
 				<label>arch <input type="text" class="latestArch" value="universal" /></label>
-				<label>公開URL（R2アップロード後に自動入力） <input type="text" class="latestUrl" readonly /></label>
+				<label title="R2アップロード後に自動入力">公開URL <input type="text" class="latestUrl" readonly placeholder="R2アップロード後に自動入力" /></label>
 				<button type="button" class="btnUploadLatest">R2へアップロード</button>
 				<span class="uploadStatus"></span>
 			</fieldset>
@@ -150,7 +148,7 @@
 				</label>
 				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
 				<label>arch <input type="text" class="latestArch" value="x64" /></label>
-				<label>公開URL（R2アップロード後に自動入力） <input type="text" class="latestUrl" readonly /></label>
+				<label title="R2アップロード後に自動入力">公開URL <input type="text" class="latestUrl" readonly placeholder="R2アップロード後に自動入力" /></label>
 				<button type="button" class="btnUploadLatest">R2へアップロード</button>
 				<span class="uploadStatus"></span>
 			</fieldset>

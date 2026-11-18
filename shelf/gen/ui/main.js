@@ -145,7 +145,7 @@ async function applyProjectFolder(app, node, path) {
 		node.querySelector('.settingSnGuessNotice').hidden = true;
 	}
 	node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
-	if (!app.appId) node.querySelector('.appId').value = app.appId;
+	node.querySelector('.appId').value = app.appId;
 	if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;
 	scheduleSaveState();
 }

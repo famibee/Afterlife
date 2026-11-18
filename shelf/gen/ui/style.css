@@ -29,11 +29,15 @@ body {
 }
 
 header {
-	padding: 14px 20px;
+	padding: 8px 16px 0;
 	border-bottom: 1px solid var(--border);
+	display: flex;
+	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 4px 20px;
 }
 
-header h1 { font-size: 16px; margin: 0 0 10px; }
+header h1 { font-size: 15px; margin: 0 0 6px; }
 
 .tabs { display: flex; gap: 4px; }
 
@@ -49,21 +53,39 @@ header h1 { font-size: 16px; margin: 0 0 10px; }
 
 .tab.active { color: var(--text); border-bottom-color: var(--card-bg); font-weight: 600; }
 
-main { padding: 20px; max-width: 760px; }
+main { padding: 12px 16px; }
+
+h2 { font-size: 14px; margin: 14px 0 6px; }
+p { margin: 4px 0; }
+
+/* 設定の少ないタブは、入力欄が間延びしないよう幅を絞る */
+#panel-circle, #panel-hosting { max-width: 760px; }
 
 .panel { display: none; }
 .panel.active { display: block; }
 
+/* ラベルを左、入力欄を右に横並びにする（ボタンがあれば右端）。狭いウィンドウでは縦積みに戻す */
 label {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	margin-bottom: 10px;
+	display: grid;
+	grid-template-columns: 9.5em minmax(0, 1fr);
+	align-items: center;
+	column-gap: 8px;
+	margin-bottom: 5px;
 	font-size: 12px;
 	color: var(--text-dim);
 }
 
-label input[type="checkbox"] { width: auto; }
+label:has(> button, > .btnrow) { grid-template-columns: 9.5em minmax(0, 1fr) auto; }
+label > button, label > .btnrow { margin: 0; }
+.btnrow { display: inline-flex; gap: 4px; }
+
+label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 6px; }
+label input[type="checkbox"] { width: auto; margin: 0; }
+
+@media (max-width: 520px) {
+	label, label:has(> button, > .btnrow) { grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; }
+	label > input { grid-column: 1; }
+}
 
 input[type="text"], input[type="password"] {
 	font: inherit;
@@ -71,7 +93,8 @@ input[type="text"], input[type="password"] {
 	background: var(--bg);
 	border: 1px solid var(--border);
 	border-radius: 6px;
-	padding: 6px 8px;
+	padding: 4px 8px;
+	min-width: 0;
 }
 
 button {
@@ -80,7 +103,7 @@ button {
 	background: var(--card-bg);
 	color: var(--text);
 	border-radius: 6px;
-	padding: 6px 12px;
+	padding: 4px 10px;
 	cursor: pointer;
 	margin-right: 6px;
 }
@@ -96,26 +119,38 @@ code {
 	padding: 1px 5px;
 }
 
+/* 広いウィンドウでは2列、狭ければ1列に自動で切り替わる */
 .app-card {
 	background: var(--card-bg);
 	border: 1px solid var(--border);
 	border-radius: 8px;
-	padding: 14px;
-	margin-bottom: 14px;
+	padding: 10px 14px;
+	margin-bottom: 12px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+	column-gap: 20px;
+	align-items: start;
 }
+
+/* 幅いっぱいに置くもの */
+.app-card-header, .app-card > .scanWarnings, .app-card > label:has(> input[type="checkbox"]),
+.app-card > fieldset:not(.os-pane), .app-card > label:has(> .projectFolder) { grid-column: 1 / -1; }
 
 .app-card-header {
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
-	margin-bottom: 10px;
+	margin-bottom: 6px;
 }
+
+.scanWarnings:empty { display: none; }
 
 fieldset {
 	border: 1px solid var(--border);
 	border-radius: 6px;
-	margin: 10px 0;
-	padding: 10px;
+	margin: 6px 0;
+	padding: 6px 10px;
+	min-width: 0;
 }
 
 legend { color: var(--text-dim); font-size: 12px; padding: 0 4px; }
@@ -126,7 +161,8 @@ pre#generateLog {
 	background: var(--card-bg);
 	border: 1px solid var(--border);
 	border-radius: 6px;
-	padding: 10px;
+	padding: 8px 10px;
+	margin: 4px 0;
 	white-space: pre-wrap;
 	font-size: 12px;
 }
@@ -134,5 +170,15 @@ pre#generateLog {
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 
-.generate-settings { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.generate-settings {
+	background: var(--card-bg);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px 14px;
+	margin-bottom: 12px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+	column-gap: 20px;
+}
+.generate-settings > label:has(> input[type="checkbox"]) { grid-column: 1 / -1; }
 .app-card.dragover { outline: 2px dashed #4a90d9; outline-offset: -2px; }
