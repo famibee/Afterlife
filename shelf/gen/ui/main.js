@@ -412,10 +412,16 @@ async function cancelOsPublish(app, os, node) {
 		? `${app.displayName || app.appId} の${label}版の公開を取り消しますか？\n\n・マニフェストから${label}版を外します（ランチャーを生成し直し、マニフェストをアップロードしたとき反映）\n・R2のインストーラーは、そのマニフェスト公開のあとで削除します`
 		: `${label}版の選択を取り消しますか？`;
 	if (!(await askYesNo(msg))) return;
-	if (published && app.appSlug) {
-		cancelSeq += 1;
-		app.pendingDeletes = (app.pendingDeletes || []).filter((d) => d.os !== os);
-		app.pendingDeletes.push({os, prefix: `games/${app.appSlug}/${os}/`, seq: cancelSeq});
+	if (published) {
+		// 削除対象の階層は公開URLから取る（slugが後で変わっても、実際に上げた場所を指せる）
+		const m = app[os].url.match(/\/(games\/[^/]+\/(?:mac|win)\/)/);
+		const prefix = m ? m[1] : (app.appSlug ? `games/${app.appSlug}/${os}/` : null);
+		if (!prefix) { notify('R2の削除対象を特定できませんでした。ホスティングタブの一覧から手で削除してください'); }
+		else {
+			cancelSeq += 1;
+			app.pendingDeletes = (app.pendingDeletes || []).filter((d) => d.os !== os);
+			app.pendingDeletes.push({os, prefix, seq: cancelSeq});
+		}
 	}
 	const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
 	app[os] = {path: '', version: '', arch: os === 'mac' ? 'universal' : 'x64', sha256: '', size: 0, url: ''};
@@ -653,9 +659,11 @@ $('btnGenerate').addEventListener('click', async () => {
 				eventOnly: a.eventOnly,
 			})),
 		};
+		// 生成が始まった時点の取り消し番号を控える。生成中に取り消されたものは、このマニフェストには反映されていない
+		const seqAtStart = cancelSeq;
 		const result = await invoke('generate_launchers', {request});
 		lastGenerateResult = result;
-		lastGenerateResult.cancelSeq = cancelSeq;
+		lastGenerateResult.cancelSeq = seqAtStart;
 		const lines = [
 			result.macDmgPath ? `✅ mac: ${result.macDmgPath}` : '✗ mac: 生成失敗',
 			result.winExePath ? `✅ win: ${result.winExePath}` : `⚠ win: ${result.winSkippedReason}`,

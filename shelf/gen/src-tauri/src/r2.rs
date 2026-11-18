@@ -169,20 +169,32 @@ pub async fn r2_delete_not_in(config: R2Config, prefix: String, keep_keys: Vec<S
 		return Err("prefixは空でなく末尾が / であること".to_string());
 	}
 	let client = r2_client(&config);
-	let resp = client
-		.list_objects_v2()
-		.bucket(&config.bucket)
-		.prefix(&prefix)
-		.send()
-		.await
-		.map_err(|e| e.to_string())?;
 	let mut deleted: Vec<String> = Vec::new();
-	for obj in resp.contents() {
-		let Some(key) = obj.key() else { continue };
-		if keep_keys.iter().any(|k| k == key) { continue; }
-		client.delete_object().bucket(&config.bucket).key(key).send().await
-			.map_err(|e| format!("{key} の削除に失敗: {e}"))?;
-		deleted.push(key.to_string());
+	// list_objects_v2は1回1000件まで。続きがある限りページをたどる
+	let mut token: Option<String> = None;
+	loop {
+		let resp = client
+			.list_objects_v2()
+			.bucket(&config.bucket)
+			.prefix(&prefix)
+			.set_continuation_token(token.take())
+			.send()
+			.await
+			.map_err(|e| e.to_string())?;
+		for obj in resp.contents() {
+			let Some(key) = obj.key() else { continue };
+			if keep_keys.iter().any(|k| k == key) { continue; }
+			client.delete_object().bucket(&config.bucket).key(key).send().await
+				.map_err(|e| format!("{key} の削除に失敗: {e}"))?;
+			deleted.push(key.to_string());
+		}
+		if resp.is_truncated() == Some(true) {
+			token = resp.next_continuation_token().map(String::from);
+			if token.is_none() { break; }
+		}
+		else {
+			break;
+		}
 	}
 	Ok(deleted)
 }
