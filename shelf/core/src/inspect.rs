@@ -36,7 +36,7 @@ pub fn inspect_local(
 	mac_apps_dir: &Path,
 	win_dirs: &[PathBuf],
 ) -> LocalState {
-	let Some(install_path) = detect::find_installed_app(&entry.app_name, platform, mac_apps_dir, win_dirs) else {
+	let Some(install_path) = detect::find_installed_app(entry.install_dir_name(platform), platform, mac_apps_dir, win_dirs) else {
 		return LocalState::NotInstalled;
 	};
 
@@ -84,7 +84,7 @@ mod tests {
 	fn app_entry(app_name: &str, checksum_setting: Vec<&str>, checksum_installer: Vec<&str>) -> AppEntry {
 		AppEntry {
 			app_id: app_name.to_lowercase(),
-			app_name: app_name.to_string(),
+			app_name: app_name.to_string(), win_install_dir_name: None,
 			setting_sn_file_name: "setting.sn".to_string(),
 			checksum_setting: checksum_setting.into_iter().map(String::from).collect(),
 			checksum_installer: checksum_installer.into_iter().map(String::from).collect(),

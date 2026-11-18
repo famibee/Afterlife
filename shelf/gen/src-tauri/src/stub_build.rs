@@ -384,4 +384,16 @@ mod tests {
 		let stamped = shelf_core::footer::append_footer(&after, r#"{"schema":1}"#);
 		assert_eq!(shelf_core::footer::extract_trailing_json(&stamped).as_deref(), Some(r#"{"schema":1}"#));
 	}
+
+	/// Win実機確認用のサンプルexeを作る（アイコン差し替え＋実設定の埋め込み）。
+	/// `SHELF_TEST_OUT=<出力exe> SHELF_TEST_CONFIG_EXE=<生成済みランチャーexe> cargo test -p shelf_gen -- --ignored make_win_icon_sample`
+	#[test]
+	#[ignore]
+	fn make_win_icon_sample() {
+		let out = std::env::var("SHELF_TEST_OUT").expect("SHELF_TEST_OUT");
+		let cfg_exe = std::env::var("SHELF_TEST_CONFIG_EXE").expect("SHELF_TEST_CONFIG_EXE");
+		let json = shelf_core::footer::extract_trailing_json(&std::fs::read(cfg_exe).unwrap()).expect("設定が埋め込まれていない");
+		let stub = find_win_prebuilt_exe().expect("Win stubが無い");
+		stamp_win_exe(&stub, &json, Path::new(&out), Some(&icon_fixture())).expect("生成に失敗");
+	}
 }

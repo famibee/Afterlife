@@ -21,6 +21,12 @@ use std::path::{Path, PathBuf};
 pub struct AppEntry {
 	pub app_id: String,
 	pub app_name: String,
+	/// Windowsのインストール先フォルダ名（ProgramFiles等の直下）。electron-builderは
+	/// フォルダ名にappName（表示名）ではなくパッケージ名を使うため、macの`{appName}.app`と
+	/// 一致しないことがある（例：appName=「大阪九龍条」、フォルダ=`sn_kowloon`。
+	/// 2026-11-18 Win実機で判明）。未指定ならappNameを使う。実行ファイル名は常にappName。
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub win_install_dir_name: Option<String>,
 	/// asar内でのbasename（フォルダ位置は問わない。legacy-app-patch.md 2026-09-13決定を踏襲）
 	pub setting_sn_file_name: String,
 	/// 過去出荷分すべて。どれか1つと一致すればよい
@@ -30,6 +36,16 @@ pub struct AppEntry {
 	/// 選ばせて比較する）。空なら②は使えない
 	#[serde(default)]
 	pub checksum_installer: Vec<String>,
+}
+
+impl AppEntry {
+	/// インストール先の探索に使うフォルダ名（macは`{name}.app`の name、Winは直下フォルダ名）
+	pub fn install_dir_name(&self, platform: crate::detect::Platform) -> &str {
+		match (platform, &self.win_install_dir_name) {
+			(crate::detect::Platform::Windows, Some(n)) if !n.is_empty() => n,
+			_ => &self.app_name,
+		}
+	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -145,5 +161,29 @@ mod tests {
 		let cfg = result.unwrap();
 		assert_eq!(cfg.launcher_name, "Test Launcher");
 		std::fs::remove_dir_all(&dir).unwrap();
+	}
+
+	#[test]
+	fn install_dir_name_overrides_only_on_windows_and_falls_back_to_app_name() {
+		use crate::detect::Platform;
+		let mut entry = AppEntry {
+			app_id: "a".into(), app_name: "大阪九龍条".into(), win_install_dir_name: Some("sn_kowloon".into()),
+			setting_sn_file_name: "x.sn".into(), checksum_setting: vec![], checksum_installer: vec![],
+		};
+		assert_eq!(entry.install_dir_name(Platform::Windows), "sn_kowloon");
+		assert_eq!(entry.install_dir_name(Platform::Mac), "大阪九龍条");	// macは常にappName
+		entry.win_install_dir_name = Some(String::new());	// 空文字は未指定扱い
+		assert_eq!(entry.install_dir_name(Platform::Windows), "大阪九龍条");
+		entry.win_install_dir_name = None;
+		assert_eq!(entry.install_dir_name(Platform::Windows), "大阪九龍条");
+	}
+
+	#[test]
+	fn win_install_dir_name_is_optional_in_json_and_omitted_when_none() {
+		let json = r#"{"schema":1,"launcherName":"t","manifestUrl":"u","manifestPublicKey":"k","manualUrl":"m",
+			"apps":[{"appId":"a","appName":"N","settingSnFileName":"x.sn","checksumSetting":[],"checksumInstaller":[]}]}"#;
+		let cfg = parse(json).unwrap();
+		assert_eq!(cfg.apps[0].win_install_dir_name, None);
+		assert!(!serde_json::to_string(&cfg).unwrap().contains("winInstallDirName"));
 	}
 }

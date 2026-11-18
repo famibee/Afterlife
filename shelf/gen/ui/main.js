@@ -50,7 +50,7 @@ function newApp() {
 		id: `app-${appCounter}`,
 		projectFolder: null,
 		appSlug: '',
-		appId: '', displayName: '', summary: '', eventOnly: false,
+		appId: '', winInstallDirName: '', displayName: '', summary: '', eventOnly: false,
 		storeLabel: '', storeUrl: '',
 		settingSnFileName: 'setting.sn', crypto: false,
 		iconPngBase64: '',
@@ -77,6 +77,7 @@ function renderApp(app) {
 		el.addEventListener(event, () => { app[prop] = el.value; scheduleSaveState(); });
 	};
 	bind('.appId', 'appId');
+	bind('.winInstallDirName', 'winInstallDirName');
 	bind('.displayName', 'displayName');
 	bind('.summary', 'summary');
 	bind('.storeLabel', 'storeLabel');
@@ -161,6 +162,12 @@ async function applyProjectFolder(app, node, path) {
 	}
 	node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
 	node.querySelector('.appId').value = app.appId;
+	// Winの実インストール先フォルダ名はpackage.jsonのname（=appSlug）になることが多い（electron-builder）。
+	// 未入力のときだけ既定値として入れる。違う場合は手で直す
+	if (!app.winInstallDirName && app.appSlug) {
+		app.winInstallDirName = app.appSlug;
+		node.querySelector('.winInstallDirName').value = app.appSlug;
+	}
 	if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;
 	scheduleSaveState();
 }
@@ -372,6 +379,7 @@ $('btnGenerate').addEventListener('click', async () => {
 			apps: apps.map((a) => ({
 				appId: a.appId,
 				appName: a.displayName,
+				winInstallDirName: a.winInstallDirName || null,
 				settingSnFileName: a.settingSnFileName,
 				checksumSetting: a.checksumSetting,
 				checksumInstaller: a.checksumInstaller,

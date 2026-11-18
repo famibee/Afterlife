@@ -124,6 +124,9 @@ fn load_signing_public_key() -> Result<String, String> {
 struct GenerateAppInput {
 	app_id: String,
 	app_name: String,
+	/// Windowsのインストール先フォルダ名。空・未指定ならapp_nameを使う（core側の判断）
+	#[serde(default)]
+	win_install_dir_name: Option<String>,
 	setting_sn_file_name: String,
 	#[serde(default)]
 	checksum_setting: Vec<String>,
@@ -201,6 +204,7 @@ fn generate_launchers_blocking(request: GenerateRequest) -> Result<GenerateResul
 		apps: request.apps.iter().map(|a| shelf_core::config::AppEntry {
 			app_id: a.app_id.clone(),
 			app_name: a.app_name.clone(),
+			win_install_dir_name: a.win_install_dir_name.clone().filter(|n| !n.trim().is_empty()),
 			setting_sn_file_name: a.setting_sn_file_name.clone(),
 			checksum_setting: a.checksum_setting.clone(),
 			checksum_installer: a.checksum_installer.clone(),

@@ -166,7 +166,7 @@ fn launch_app(app: AppHandle, state: tauri::State<'_, AppState>, app_id: String)
 	let entry = state.config.apps.iter().find(|a| a.app_id == app_id)
 		.ok_or_else(|| "不明なアプリIDです".to_string())?;
 	let platform = detect::host_platform();
-	let install_path = detect::find_installed_app(&entry.app_name, platform, &mac_apps_dir(), &win_dirs())
+	let install_path = detect::find_installed_app(entry.install_dir_name(platform), platform, &mac_apps_dir(), &win_dirs())
 		.ok_or_else(|| "インストールが見つかりません".to_string())?;
 
 	launch::launch_installed_app(&install_path, platform, &entry.app_name)
