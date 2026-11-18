@@ -46,7 +46,9 @@
 				</label>
 				<label title="正方形のPNG、512px以上推奨">アイコン（任意） <input type="text" id="launcherIconPath" readonly placeholder="未指定（既定の本棚アイコン）" />
 					<span class="btnrow"><button type="button" id="btnPickLauncherIcon">選択</button><button type="button" id="btnClearLauncherIcon">解除</button></span></label>
-				<label title="出力ファイル名の基準">ボリューム名 <input type="text" id="volumeName" placeholder="例: FamibeeLauncher（出力ファイル名の基準）" /></label>
+				<details class="advanced"><summary>詳細設定</summary>
+					<label title="出力ファイル名の基準。空ならランチャー名">ボリューム名 <input type="text" id="volumeName" placeholder="空ならランチャー名" /></label>
+				</details>
 				<label><input type="checkbox" id="uploadLaunchers" /> 生成した配布物（ランチャー本体）もR2へアップロードする
 					<span class="hint">（<code>games/</code>とは別の<code>launcher/</code>配下に置く）</span>
 				</label>
@@ -100,9 +102,6 @@
 			</label>
 			<p class="scanWarnings"></p>
 
-			<label title="マニフェスト上の識別子">appId <input type="text" class="appId" /></label>
-			<label title="Windowsのインストール先フォルダ名（ProgramFiles等の直下）。electron-builderは表示名でなくパッケージ名を使うことがある。空なら表示名">Winフォルダ名 <input type="text" class="winInstallDirName" placeholder="例: sn_kowloon（空なら表示名）" /></label>
-			<label>表示名 <input type="text" class="displayName" /></label>
 			<label>説明 <input type="text" class="summary" /></label>
 			<label><input type="checkbox" class="eventOnly" /> イベント配布のみ（配布サイトへのリンクを出さない）</label>
 			<label>配布先の表示名 <input type="text" class="storeLabel" placeholder="例: DLsite" /></label>
@@ -110,6 +109,8 @@
 
 			<fieldset>
 				<legend>購入者チェック</legend>
+				<details class="settingSnDetails">
+					<summary>setting.sn のファイル名（通常は自動。確認・手直し用）</summary>
 				<label title="basename">setting.snファイル名
 					<input type="text" class="settingSnFileName" value="setting.sn" />
 				</label>
@@ -122,10 +123,22 @@
 					pass.json がある場合のみ）。過去出荷インストーラーからの抽出に失敗する場合は、
 					実際のapp.asarを確認のうえ手入力してください。
 				</p>
+				</details>
 				<label title="複数可">過去出荷版
 					<button type="button" class="btnPickLegacyInstallers">選択して追加</button>
 				</label>
 				<ul class="legacyInstallerList"></ul>
+			</fieldset>
+
+			<fieldset class="patch-pane" hidden>
+				<legend>SKYNovel自動更新パッチ</legend>
+				<p class="patchInfo hint"></p>
+				<p class="patchNext"></p>
+				<ol class="patchSteps"></ol>
+				<div class="patchBar">
+					<button type="button" class="btnRecheck">再チェック</button>
+					<span class="patchStatus"></span>
+				</div>
 			</fieldset>
 
 			<fieldset class="os-pane" data-os="mac">
@@ -134,12 +147,14 @@
 					<input type="text" class="latestPath" readonly />
 					<button type="button" class="btnPickLatest">選択</button>
 				</label>
-				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
-				<label>arch <input type="text" class="latestArch" value="universal" /></label>
+				<label>版 <input type="text" class="latestVersion" readonly title="インストーラーのファイル名から自動入力" placeholder="インストーラーを選ぶと自動入力" /></label>
+				<label>arch <input type="text" class="latestArch" value="universal" readonly title="インストーラーのファイル名から自動入力" /></label>
 				<p class="extractNotice hint" hidden></p>
 				<label title="R2アップロード後に自動入力">公開URL <input type="text" class="latestUrl" readonly placeholder="R2アップロード後に自動入力" /></label>
 				<button type="button" class="btnUploadLatest">R2へアップロード</button>
+				<button type="button" class="btnClearLatest" title="この版を配布しない（選択を取り消す）">クリア</button>
 				<span class="uploadStatus"></span>
+				<p class="osAbsent hint">未選択：このOS向けは配布しません（ランチャーでは更新を案内しません）</p>
 			</fieldset>
 
 			<fieldset class="os-pane" data-os="win">
@@ -148,12 +163,14 @@
 					<input type="text" class="latestPath" readonly />
 					<button type="button" class="btnPickLatest">選択</button>
 				</label>
-				<label>版 <input type="text" class="latestVersion" placeholder="例: 1.4.0" /></label>
-				<label>arch <input type="text" class="latestArch" value="x64" /></label>
+				<label>版 <input type="text" class="latestVersion" readonly title="インストーラーのファイル名から自動入力" placeholder="インストーラーを選ぶと自動入力" /></label>
+				<label>arch <input type="text" class="latestArch" value="x64" readonly title="インストーラーのファイル名から自動入力" /></label>
 				<p class="extractNotice hint" hidden></p>
 				<label title="R2アップロード後に自動入力">公開URL <input type="text" class="latestUrl" readonly placeholder="R2アップロード後に自動入力" /></label>
 				<button type="button" class="btnUploadLatest">R2へアップロード</button>
+				<button type="button" class="btnClearLatest" title="この版を配布しない（選択を取り消す）">クリア</button>
 				<span class="uploadStatus"></span>
+				<p class="osAbsent hint">未選択：このOS向けは配布しません（ランチャーでは更新を案内しません）</p>
 			</fieldset>
 		</div>
 	</template>

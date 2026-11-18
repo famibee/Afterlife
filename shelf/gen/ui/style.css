@@ -182,3 +182,32 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord
 }
 .generate-settings > label:has(> input[type="checkbox"]) { grid-column: 1 / -1; }
 .app-card.dragover { outline: 2px dashed #4a90d9; outline-offset: -2px; }
+
+
+.patch-pane .patchNext { margin: 4px 0 8px; font-weight: bold; }
+.patch-pane .patchNext.has-next { color: #ffcc66; }
+.patch-pane .patchNext.all-ok { color: #8fd18f; }
+.patchSteps { list-style: none; margin: 0 0 8px; padding: 0; counter-reset: step; }
+.patchSteps .step { counter-increment: step; position: relative; margin: 0; padding: 6px 8px 6px 34px; border-left: 2px solid #444; font-size: 12px; }
+.patchSteps .step::before { content: counter(step); position: absolute; left: 8px; top: 6px; width: 18px; height: 18px; border-radius: 50%; background: #444; text-align: center; line-height: 18px; font-size: 11px; }
+.patchSteps .step-head { display: flex; gap: 8px; align-items: baseline; }
+.patchSteps .step-title { font-weight: bold; }
+.patchSteps .step-time { margin-left: auto; opacity: .7; }
+.patchSteps .step-note { opacity: .85; margin-top: 2px; }
+.patchSteps .step-hint { margin-top: 2px; color: #9ec9ff; }
+.patchSteps .step-body button { margin-top: 4px; }
+.patchSteps .step-ok { border-left-color: #4a8a4a; }  .patchSteps .step-ok .step-icon { color: #8fd18f; }
+.patchSteps .step-warn { border-left-color: #c9a227; } .patchSteps .step-warn .step-icon { color: #ffcc66; }
+.patchSteps .step-error { border-left-color: #c0504d; } .patchSteps .step-error .step-icon { color: #ff8a80; }
+.patchSteps .step-skip { opacity: .6; }
+.patchSteps .is-next { background: rgba(255, 204, 102, .08); }
+.patchSteps .is-next::before { background: #c9a227; color: #000; }
+.patchSteps button.primary { background: #2f6fed; color: #fff; }
+.patchBar { display: flex; gap: 12px; align-items: center; }
+
+details.advanced, details.settingSnDetails { margin: 4px 0; font-size: 12px; }
+details summary { cursor: pointer; opacity: .75; }
+input[readonly].latestVersion, input[readonly].latestArch { opacity: .75; }
+
+.os-pane.os-absent { opacity: .75; }
+.os-pane .osAbsent { margin: 4px 0 0; }

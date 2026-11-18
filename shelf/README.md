@@ -36,7 +36,7 @@ npm run app:dev
 `file:///C:/...` 形式にし、`.app` ではなく `<名前>\resources\app.asar` の構成で偽インストールを作り、
 `SHELF_WIN_DIRS` でその親フォルダを指す。Win の実インストール先は electron-builder がパッケージ名
 （`package.json` の `name`）をフォルダ名に使うため、`appName`（表示名）と違うことがある。その場合は
-config の `winInstallDirName` を設定する（生成ツールの「Winフォルダ名」欄）。
+config の `winInstallDirName` を設定する（生成ツールはプロジェクトの `package.json` の `name` を自動で入れるので、入力欄は無い）。
 
 `ui/` を直したら `cargo build` をやり直す（`frontendDist` を埋め込む構成のため、JS だけ
 直してアプリを再起動しても古いコードのまま）。

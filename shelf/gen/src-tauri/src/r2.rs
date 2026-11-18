@@ -161,6 +161,46 @@ pub async fn r2_delete_others_with_prefix(config: R2Config, prefix: String, keep
 	Ok(deleted)
 }
 
+/// 指定prefix配下から keep_keys に含まれないものを削除する（複数ファイルを一式で入れ替える公開物の旧版掃除用）。
+/// 削除したキーを返す。アップロード成功「後」に呼ぶこと
+#[tauri::command]
+pub async fn r2_delete_not_in(config: R2Config, prefix: String, keep_keys: Vec<String>) -> Result<Vec<String>, String> {
+	if prefix.is_empty() || !prefix.ends_with('/') {
+		return Err("prefixは空でなく末尾が / であること".to_string());
+	}
+	let client = r2_client(&config);
+	let resp = client
+		.list_objects_v2()
+		.bucket(&config.bucket)
+		.prefix(&prefix)
+		.send()
+		.await
+		.map_err(|e| e.to_string())?;
+	let mut deleted: Vec<String> = Vec::new();
+	for obj in resp.contents() {
+		let Some(key) = obj.key() else { continue };
+		if keep_keys.iter().any(|k| k == key) { continue; }
+		client.delete_object().bucket(&config.bucket).key(key).send().await
+			.map_err(|e| format!("{key} の削除に失敗: {e}"))?;
+		deleted.push(key.to_string());
+	}
+	Ok(deleted)
+}
+
+/// オブジェクトをテキストとして読む。無ければNone（新旧比較用）
+#[tauri::command]
+pub async fn r2_get_text(config: R2Config, key: String) -> Result<Option<String>, String> {
+	let client = r2_client(&config);
+	match client.get_object().bucket(&config.bucket).key(&key).send().await {
+		Ok(resp) => {
+			let bytes = resp.body.collect().await.map_err(|e| e.to_string())?.into_bytes();
+			Ok(Some(String::from_utf8_lossy(&bytes).to_string()))
+		}
+		Err(e) if e.as_service_error().is_some_and(|s| s.is_no_such_key()) => Ok(None),
+		Err(e) => Err(e.to_string()),
+	}
+}
+
 /// アップロード後の公開URL（表示用）を返す
 #[tauri::command]
 pub async fn r2_upload_file(config: R2Config, local_path: String, key: String) -> Result<String, String> {

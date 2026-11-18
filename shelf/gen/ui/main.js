@@ -76,9 +76,6 @@ function renderApp(app) {
 		el.value = app[prop] ?? '';
 		el.addEventListener(event, () => { app[prop] = el.value; scheduleSaveState(); });
 	};
-	bind('.appId', 'appId');
-	bind('.winInstallDirName', 'winInstallDirName');
-	bind('.displayName', 'displayName');
 	bind('.summary', 'summary');
 	bind('.storeLabel', 'storeLabel');
 	bind('.storeUrl', 'storeUrl');
@@ -97,11 +94,13 @@ function renderApp(app) {
 		const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
 		pane.querySelector('.latestPath').value = app[os].path;
 		pane.querySelector('.latestVersion').value = app[os].version;
-		pane.querySelector('.latestVersion').addEventListener('input', (e) => { app[os].version = e.target.value; scheduleSaveState(); });
 		pane.querySelector('.latestArch').value = app[os].arch;
-		pane.querySelector('.latestArch').addEventListener('input', (e) => { app[os].arch = e.target.value; scheduleSaveState(); });
 		pane.querySelector('.latestUrl').value = app[os].url;
 	}
+
+	node.querySelector('.btnRecheck').addEventListener('click', () => refreshPatchPane(app, node));
+	refreshPatchPane(app, node);
+	updateOsAbsent(app, node);
 
 	node.querySelector('.btn-remove-app').addEventListener('click', () => {
 		apps = apps.filter((a) => a.id !== app.id);
@@ -136,6 +135,18 @@ function renderApp(app) {
 		pane.querySelector('.btnUploadLatest').addEventListener('click', async () => {
 			await uploadLatest(app, os, node);
 		});
+		pane.querySelector('.btnClearLatest').addEventListener('click', () => {
+			// この版を配布しない状態に戻す（マニフェストにはこのOSの項目が入らない）
+			app[os] = {path: '', version: '', arch: os === 'mac' ? 'universal' : 'x64', sha256: '', size: 0, url: ''};
+			pane.querySelector('.latestPath').value = '';
+			pane.querySelector('.latestVersion').value = '';
+			pane.querySelector('.latestArch').value = app[os].arch;
+			pane.querySelector('.latestUrl').value = '';
+			pane.querySelector('.uploadStatus').textContent = '';
+			pane.querySelector('.extractNotice').hidden = true;
+			updateOsAbsent(app, node);
+			scheduleSaveState();
+		});
 	}
 
 	return node;
@@ -144,8 +155,11 @@ function renderApp(app) {
 async function applyProjectFolder(app, node, path) {
 	app.projectFolder = path;
 	const scan = await invoke('scan_project_folder', {path});
-	app.displayName = app.displayName || scan.appName;
-	app.appId = app.appId || scan.appSlug;
+	// 表示名・appId・Winのインストール先フォルダ名は package.json から決まる値。
+	// 表示名はmacの<表示名>.app・Winの<表示名>.exeを探すキーなので、手で変えると検出が壊れる。常にスキャン結果に合わせる
+	app.displayName = scan.appName;
+	app.appId = scan.appSlug;
+	app.winInstallDirName = scan.appSlug;	// electron-builderはフォルダ名にpackage.jsonのnameを使う
 	app.appSlug = scan.appSlug;
 	app.crypto = scan.crypto;
 	app.iconPngBase64 = scan.iconPngBase64 || '';
@@ -160,15 +174,9 @@ async function applyProjectFolder(app, node, path) {
 	else {
 		node.querySelector('.settingSnGuessNotice').hidden = true;
 	}
+	node.querySelector('.settingSnDetails').open = !!app.crypto && !scan.settingSnFileNameGuess;
 	node.querySelector('.scanWarnings').textContent = (scan.warnings || []).join(' / ');
-	node.querySelector('.appId').value = app.appId;
-	// Winの実インストール先フォルダ名はpackage.jsonのname（=appSlug）になることが多い（electron-builder）。
-	// 未入力のときだけ既定値として入れる。違う場合は手で直す
-	if (!app.winInstallDirName && app.appSlug) {
-		app.winInstallDirName = app.appSlug;
-		node.querySelector('.winInstallDirName').value = app.appSlug;
-	}
-	if (!node.querySelector('.displayName').value) node.querySelector('.displayName').value = app.displayName;
+	await refreshPatchPane(app, node);
 	scheduleSaveState();
 }
 
@@ -185,6 +193,232 @@ async function extractChecksumFor(path, settingSnFileName) {
 		// ②フォールバック（インストーラー本体のサンプリングチェックサム）に切り替える
 		const checksum = await invoke('installer_checksum', {path});
 		return {kind: 'fallback', checksum, error: String(e)};
+	}
+}
+
+// --- SKYNovel [update_check] 用パッチ（build/package/update 一式） ---
+
+function randomToken(len) {
+	const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+	const buf = crypto.getRandomValues(new Uint8Array(len));
+	return Array.from(buf, (b) => chars[b % chars.length]).join('');
+}
+
+// 公開階層: main.snに既にある公開URL配下ならそれを維持（配布済みアプリが見に行く場所なので変えない）。
+// 無ければnull（呼び出し側が新規に作る）
+function existingPatchPrefix(info, config) {
+	const base = (config.publicBaseUrl || '').replace(/\/+$/, '') + '/';
+	if (info.currentUrl && config.publicBaseUrl && info.currentUrl.startsWith(base) && info.currentUrl.endsWith('/')) {
+		return info.currentUrl.slice(base.length);
+	}
+	return null;
+}
+
+// 新旧チェック（元→暗号化→バンドル→update一式→R2）。R2が未設定・未確認でもローカル分は返る
+async function runPatchCheck(app, info) {
+	const config = await invoke('r2_load_config').catch(() => null);
+	let remoteChecked = false;
+	let remoteIndex = null;
+	if (config && config.bucket) {
+		const prefix = existingPatchPrefix(info, config);
+		if (prefix) {
+			try {
+				remoteIndex = await invoke('r2_get_text', {config, key: `${prefix}_index.json`});
+				remoteChecked = true;
+			}
+			catch (e) {
+				const steps = await invoke('patch_check', {projectFolder: app.projectFolder, remoteChecked: false, remoteIndex: null});
+				const r2 = steps.find((s) => s.id === 'r2');
+				r2.level = 'warn'; r2.notes = [`R2の確認に失敗: ${e}`];
+				return steps;
+			}
+		}
+	}
+	return invoke('patch_check', {projectFolder: app.projectFolder, remoteChecked, remoteIndex});
+}
+
+// 工程ごとのやること（SKYNovel側の作業。このツールからは実行しない）
+const PATCH_STEP_HINTS = {
+	crypto: '暗号化し直す（BlueSNovel拡張）',
+	mac: 'mac版をバンドルする（npm run pkg:mac）',
+	win: 'win版をバンドルする（Windows機で npm run pkg:win）',
+	index: '配布形式を生成して build/package/update を作り直す',
+};
+const PATCH_ICON = {error: '✗', warn: '⚠', ok: '✓', skip: '–', todo: '○'};
+
+// 更新フォルダがあるプロジェクトのときだけ欄を出す。
+// 手順: 元 → 暗号化 → main.sn の url → mac/win バンドル → update 一式 → R2。
+// 上流が下流より新しい工程に印を付け、最初の問題を「次はここ」にする
+async function refreshPatchPane(app, node) {
+	const pane = node.querySelector('.patch-pane');
+	if (!app.projectFolder) { pane.hidden = true; return; }
+	const info = await invoke('patch_inspect', {projectFolder: app.projectFolder}).catch(() => null);
+	pane.hidden = !info || !info.available;
+	if (pane.hidden) return;
+	const mb = (info.files.reduce((n, f) => n + f.size, 0) / 1024 / 1024).toFixed(1);
+	node.querySelector('.patchInfo').textContent = `v${info.version}・${info.files.length}ファイル（${mb} MB）`;
+
+	const list = node.querySelector('.patchSteps');
+	list.textContent = '確認中…';
+	let steps;
+	try {
+		steps = await runPatchCheck(app, info);
+	}
+	catch (e) {
+		list.textContent = `チェックに失敗: ${e}`;
+		return;
+	}
+	const config = await invoke('r2_load_config').catch(() => null);
+
+	// main.sn の url 工程はJS側で判定する（公開URLはR2設定が要るため）
+	const mainsn = steps.find((s) => s.id === 'mainsn');
+	const hasR2 = !!(config && config.bucket && config.publicBaseUrl);
+	const existing = hasR2 ? existingPatchPrefix(info, config) : null;
+	let urlAction = null;
+	if (!info.mainSnExists) { mainsn.level = 'error'; mainsn.notes.push('doc/prj/script/main.sn が無い'); }
+	else if (!hasR2) { mainsn.level = 'skip'; mainsn.notes.push(`現在: ${info.currentUrl || '（未設定）'}（R2設定が無く判定できない）`); }
+	else if (existing) { mainsn.notes.push(`現在: ${info.currentUrl}`); }
+	else {
+		mainsn.level = 'warn';
+		mainsn.notes.push(info.currentUrl ? `公開URLの外を指している: ${info.currentUrl}` : '[update_check] の url が未設定');
+		mainsn.notes.push('設定したら再バンドルが必要');
+		urlAction = async () => {
+			app.patchPrefix = app.patchPrefix || `patch/${app.appSlug}/${randomToken(40)}/`;
+			const url = await invoke('r2_public_url', {config, key: app.patchPrefix});
+			await invoke('patch_set_update_check_url', {projectFolder: app.projectFolder, url});
+			scheduleSaveState();
+		};
+	}
+
+	const next = steps.find((s) => s.level === 'error' || s.level === 'warn');
+	const nextEl = node.querySelector('.patchNext');
+	nextEl.textContent = next
+		? `次にやること: ${next.id === 'r2' ? 'R2へアップロード' : (PATCH_STEP_HINTS[next.id] || (next.id === 'mainsn' ? 'main.sn の url を設定' : next.title))}`
+		: '✓ すべて最新です（公開済み）';
+	nextEl.className = `patchNext ${next ? 'has-next' : 'all-ok'}`;
+
+	list.textContent = '';
+	for (const s of steps) {
+		const li = document.createElement('li');
+		const isNext = s === next;
+		li.className = `step step-${s.level}${isNext ? ' is-next' : ''}`;
+
+		const head = document.createElement('div');
+		head.className = 'step-head';
+		head.innerHTML = '<span class="step-icon"></span><span class="step-title"></span><span class="step-time"></span>';
+		head.querySelector('.step-icon').textContent = PATCH_ICON[s.level];
+		head.querySelector('.step-title').textContent = s.title;
+		head.querySelector('.step-time').textContent = s.time;
+		li.appendChild(head);
+
+		const body = document.createElement('div');
+		body.className = 'step-body';
+		for (const n of s.notes) {
+			const p = document.createElement('div');
+			p.className = 'step-note';
+			p.textContent = n;
+			body.appendChild(p);
+		}
+		if ((s.level === 'warn' || s.level === 'error') && PATCH_STEP_HINTS[s.id]) {
+			const p = document.createElement('div');
+			p.className = 'step-hint';
+			p.textContent = `→ ${PATCH_STEP_HINTS[s.id]}`;
+			body.appendChild(p);
+		}
+		if (s.id === 'mainsn' && urlAction) {
+			const b = document.createElement('button');
+			b.type = 'button';
+			b.textContent = 'url を設定';
+			b.addEventListener('click', async () => {
+				b.disabled = true;
+				try { await urlAction(); await refreshPatchPane(app, node); }
+				catch (e) { node.querySelector('.patchStatus').textContent = `失敗: ${e}`; b.disabled = false; }
+			});
+			body.appendChild(b);
+		}
+		if (s.id === 'r2') {
+			const b = document.createElement('button');
+			b.type = 'button';
+			b.textContent = 'R2へアップロード';
+			b.className = isNext ? 'primary' : '';
+			b.addEventListener('click', () => publishPatch(app, node));
+			body.appendChild(b);
+		}
+		if (body.childNodes.length) li.appendChild(body);
+		list.appendChild(li);
+	}
+	return steps;
+}
+
+async function publishPatch(app, node) {
+	const status = node.querySelector('.patchStatus');
+	const btn = node.querySelector('.btnRecheck');
+	if (!app.appSlug) { notify('先にプロジェクトフォルダを選んでスキャンしてください'); return; }
+	btn.disabled = true;
+	try {
+		const config = await invoke('r2_load_config');
+		if (!config || !config.bucket) { notify('先に「ホスティング」タブでR2の設定を保存してください'); return; }
+		const info = await invoke('patch_inspect', {projectFolder: app.projectFolder});
+		if (!info.available) { notify('build/package/update/_index.json が見つかりません'); return; }
+
+		// 公開フォルダ: main.snに既にある公開URL配下ならそれを維持（配布済みアプリが見に行く場所なので変えない）。
+		// 無ければ推測されにくいランダム階層を新規に作る
+		const prefix = existingPatchPrefix(info, config) || `patch/${app.appSlug}/${randomToken(40)}/`;
+
+		// main.snのurlが変わる場合は、先にmain.snだけ更新して止める。今ある build/package/update は
+		// 古いurlの入ったmain.snをバンドルしたものなので、そのまま上げても配布先のアプリは新しいurlを知らない。
+		// 再バンドル（dmg・パッチ一式の再生成）のあと、もう一度このボタンを押す
+		const url = await invoke('r2_public_url', {config, key: prefix});
+		if (info.currentUrl !== url) {
+			await invoke('patch_set_update_check_url', {projectFolder: app.projectFolder, url});
+			status.textContent = '⚠ main.sn の [update_check] url を更新しました。アップロードはしていません。'
+				+ '再バンドルして dmg・パッチ一式を作り直してから、もう一度押してください';
+			await refreshPatchPane(app, node);
+			return;
+		}
+
+		// 新旧チェックの警告があれば、公開してよいか確認する。R2の工程の差は、これから上げて解消するものなので除く
+		const steps = (await refreshPatchPane(app, node)) || [];
+		const problems = steps.filter((s) => s.id !== 'r2' && s.id !== 'mainsn' && (s.level === 'error' || s.level === 'warn'));
+		if (problems.length > 0) {
+			const text = problems.map((s) => `・${s.title}: ${s.notes.join(' / ')}`).join('\n');
+			if (!(await askYesNo(`新旧チェックで警告があります。それでもR2へ公開しますか？\n\n${text}`))) {
+				status.textContent = '中止しました（警告を確認してください）';
+				return;
+			}
+		}
+
+		// _index.jsonは最後（patch_inspectが並べ済み）。途中で失敗しても旧索引が旧ファイルを指したまま残る
+		const keys = [];
+		let i = 0;
+		for (const f of info.files) {
+			i += 1;
+			status.textContent = `アップロード中 ${i}/${info.files.length}: ${f.name}`;
+			const key = prefix + f.name;
+			const exists = f.name !== '_index.json' && await invoke('r2_object_exists', {config, key});
+			if (!exists) await invoke('r2_upload_file', {config, localPath: f.path, key});
+			keys.push(key);
+		}
+		const deleted = await invoke('r2_delete_not_in', {config, prefix, keepKeys: keys}).catch((e) => { notify(`旧ファイルの削除に失敗: ${e}`); return []; });
+		status.textContent = `✓ 公開しました（v${info.version}・旧${deleted.length}件削除${deleted.length ? `: ${deleted.map((k) => k.slice(prefix.length)).join(', ')}` : ''}）`;
+		await refreshPatchPane(app, node);
+	}
+	catch (e) {
+		status.textContent = `失敗: ${e}`;
+	}
+	finally {
+		btn.disabled = false;
+	}
+}
+
+// そのOSの最新版が未登録（＝配布しない）ときの説明を出し、クリア・アップロードのボタンを出し分ける
+function updateOsAbsent(app, node) {
+	for (const os of ['mac', 'win']) {
+		const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
+		const absent = !app[os].path && !app[os].url;
+		pane.querySelector('.osAbsent').hidden = !absent;
+		pane.querySelector('.btnClearLatest').hidden = absent;
+		pane.classList.toggle('os-absent', absent);
 	}
 }
 
@@ -220,10 +454,10 @@ async function setLatestInstaller(app, os, path, node) {
 	pane.querySelector('.latestUrl').value = '';
 
 	// ファイル名（例: sn_kowloon-1.2.0-x64.dmg）から版とarchを推定して入れる。
-	// 版は未入力のときだけ。archは実ファイルと食い違うと更新判定を誤るので、読み取れたら常に合わせる
+	// 版・archは実ファイルと食い違うと更新判定を誤るので、読み取れたら常に合わせる（編集欄は無い）
 	const fname = basename(path);
 	const ver = fname.match(/(\d+\.\d+(?:\.\d+)?)/);
-	if (ver && !app[os].version) {
+	if (ver) {
 		app[os].version = ver[1];
 		pane.querySelector('.latestVersion').value = ver[1];
 	}
@@ -251,6 +485,7 @@ async function setLatestInstaller(app, os, path, node) {
 	const info = await invoke('file_info', {path});
 	app[os].sha256 = info.sha256;
 	app[os].size = info.size;
+	updateOsAbsent(app, node);
 }
 
 async function uploadLatest(app, os, node) {
@@ -400,6 +635,13 @@ $('btnGenerate').addEventListener('click', async () => {
 			result.winExePath ? `✅ win: ${result.winExePath}` : `⚠ win: ${result.winSkippedReason}`,
 			'マニフェストの組み立てが完了しました。「ホスティング」タブでアップロードしてください。',
 		];
+		for (const a of apps) {
+			const has = [a.mac.url && 'mac', a.win.url && 'win'].filter(Boolean);
+			const name = a.displayName || a.appId;
+			if (has.length === 0) lines.push(a.eventOnly ? `ℹ ${name}: mac/winとも版なし（イベント配布のみ）` : `⚠ ${name}: mac/winとも未登録（R2へアップロードした最新版がありません）`);
+			else if (has.length === 1) lines.push(`ℹ ${name}: ${has[0]}版のみ（もう一方のOSでは更新を案内しません）`);
+			if (a.mac.version && a.win.version && a.mac.version !== a.win.version) lines.push(`⚠ ${name}: macの版（${a.mac.version}）とwinの版（${a.win.version}）が違います。ランチャーにはmacの版が使われます`);
+		}
 		log.textContent = lines.join('\n');
 
 		$('uploadLaunchersStatus').textContent = '';
@@ -440,9 +682,18 @@ function r2ApplyConfig(config) {
 	$('r2PublicBaseUrl').value = config.publicBaseUrl || '';
 }
 
+// マニフェストURLは公開ベースURL+/manifest.json が通例。空のときだけ自動で入れる（別の場所に置くなら手で直せる）
+function autofillManifestUrl(config) {
+	if (!config || !config.publicBaseUrl || genSettings.manifestUrl) return;
+	genSettings.manifestUrl = `${config.publicBaseUrl.replace(/\/+$/, '')}/manifest.json`;
+	$('manifestUrl').value = genSettings.manifestUrl;
+	scheduleSaveState();
+}
+
 $('btnR2Save').addEventListener('click', async () => {
 	try {
 		await invoke('r2_save_config', {config: r2CollectConfig()});
+		autofillManifestUrl(r2CollectConfig());
 		$('r2SaveStatus').textContent = '✓ 保存しました';
 	}
 	catch (e) {
@@ -528,6 +779,7 @@ async function loadInitialState() {
 
 	const r2config = await invoke('r2_load_config').catch(() => null);
 	r2ApplyConfig(r2config);
+	autofillManifestUrl(r2config);
 
 	try {
 		$('signingPublicKey').value = await invoke('load_signing_public_key');

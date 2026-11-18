@@ -4,6 +4,7 @@
 mod extract;
 mod gen_state;
 mod project_scan;
+mod patch;
 mod r2;
 mod signing_key;
 mod stub_build;
@@ -299,6 +300,11 @@ pub fn run() {
 			r2::r2_object_exists,
 			r2::r2_list_objects,
 			r2::r2_delete_others_with_prefix,
+			r2::r2_delete_not_in,
+			patch::patch_inspect,
+			patch::patch_check,
+			r2::r2_get_text,
+			patch::patch_set_update_check_url,
 			r2::r2_upload_file,
 			r2::r2_upload_bytes,
 			r2::r2_delete_object,
