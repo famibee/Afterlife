@@ -2,6 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:event:default", "core:window:allow-close"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-close",
+    "dialog:allow-message",
+    "dialog:allow-ask"
+  ]
 }

@@ -4,6 +4,21 @@
 // ボタン操作の配線だけ（旧 patch_app/ui と同じ作り）。
 
 const { invoke } = window.__TAURI__.core;
+
+// WebView(macOSのWKWebView)ではwindow.alert/confirmが何も表示されず、confirmは常にfalseになる
+// （wryが実装していない）。Tauriのダイアログプラグインで代替する。無ければ標準のalert/confirmに戻す
+function notify(message) {
+	const dlg = window.__TAURI__ && window.__TAURI__.dialog;
+	if (dlg && dlg.message) return dlg.message(String(message), {title: 'Shelf'});
+	window.alert(message);
+	return Promise.resolve();
+}
+
+async function askYesNo(message) {
+	const dlg = window.__TAURI__ && window.__TAURI__.dialog;
+	if (dlg && dlg.ask) return dlg.ask(String(message), {title: 'Shelf', kind: 'warning'});
+	return window.confirm(message);
+}
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
@@ -66,7 +81,7 @@ async function onLaunchClick(card, btn) {
 		await invoke('launch_app', { appId: card.appId });
 	}
 	catch (e) {
-		alert(`起動できませんでした：${e}`);
+		notify(`起動できませんでした：${e}`);
 		btn.disabled = false;
 	}
 }
@@ -78,11 +93,11 @@ async function onUpdateClick(card, btn, node) {
 	try {
 		const outcome = await invoke('install_update', { appId: card.appId });
 		if (outcome === 'downloadedOnly') {
-			alert('自動での更新ができなかったため、取得したファイルを開きました。表示されたインストーラーの指示に従ってください。');
+			notify('自動での更新ができなかったため、取得したファイルを開きました。表示されたインストーラーの指示に従ってください。');
 		}
 	}
 	catch (e) {
-		alert(`更新に失敗しました：${e}`);
+		notify(`更新に失敗しました：${e}`);
 	}
 	finally {
 		btn.disabled = false;
@@ -91,7 +106,7 @@ async function onUpdateClick(card, btn, node) {
 }
 
 function onOpenUrlClick(url) {
-	return () => invoke('open_url', { url }).catch((e) => alert(`開けませんでした：${e}`));
+	return () => invoke('open_url', { url }).catch((e) => notify(`開けませんでした：${e}`));
 }
 
 async function onPickLegacyInstallerClick(card, btn) {
@@ -100,14 +115,14 @@ async function onPickLegacyInstallerClick(card, btn) {
 		const result = await invoke('pick_legacy_installer', { appId: card.appId });
 		if (result === 'cancelled') { /* 何もしない */ }
 		else if (result === 'confirmed') {
-			alert('確認できました。ただし現在の状態は変わりません。更新がある場合は配布サイトから取得してください。');
+			notify('確認できました。ただし現在の状態は変わりません。更新がある場合は配布サイトから取得してください。');
 		}
 		else {
-			alert('選んだファイルは、このアプリの過去の正規版として確認できませんでした。');
+			notify('選んだファイルは、このアプリの過去の正規版として確認できませんでした。');
 		}
 	}
 	catch (e) {
-		alert(`確認に失敗しました：${e}`);
+		notify(`確認に失敗しました：${e}`);
 	}
 	finally {
 		btn.disabled = false;
@@ -152,7 +167,7 @@ function applyCard(node, card) {
 		actions.appendChild(makeButton(card.storeLabel || '配布サイトを開く', onOpenUrlClick(card.storeUrl)));
 	}
 	if (card.status === 'manifestError' || card.status === 'manifestErrorInstalled') {
-		actions.appendChild(makeButton('再試行', () => invoke('refresh').catch((e) => alert(`再試行に失敗：${e}`))));
+		actions.appendChild(makeButton('再試行', () => invoke('refresh').catch((e) => notify(`再試行に失敗：${e}`))));
 	}
 }
 
@@ -232,7 +247,7 @@ listen('card-changed', (e) => placeCard(e.payload));
 $('btnRefresh').addEventListener('click', () => {
 	$('btnRefresh').disabled = true;
 	invoke('refresh')
-		.catch((e) => alert(`更新確認に失敗しました：${e}`))
+		.catch((e) => notify(`更新確認に失敗しました：${e}`))
 		.finally(() => { $('btnRefresh').disabled = false; });
 });
 

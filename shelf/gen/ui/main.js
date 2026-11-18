@@ -1,6 +1,21 @@
 'use strict';
 
 const {invoke} = window.__TAURI__.core;
+
+// WebView(macOSのWKWebView)ではwindow.alert/confirmが何も表示されず、confirmは常にfalseになる
+// （wryが実装していない）。Tauriのダイアログプラグインで代替する。無ければ標準のalert/confirmに戻す
+function notify(message) {
+	const dlg = window.__TAURI__ && window.__TAURI__.dialog;
+	if (dlg && dlg.message) return dlg.message(String(message), {title: 'Shelf'});
+	window.alert(message);
+	return Promise.resolve();
+}
+
+async function askYesNo(message) {
+	const dlg = window.__TAURI__ && window.__TAURI__.dialog;
+	if (dlg && dlg.ask) return dlg.ask(String(message), {title: 'Shelf', kind: 'warning'});
+	return window.confirm(message);
+}
 const $ = (id) => document.getElementById(id);
 
 // --- タブ切り替え ---
@@ -174,7 +189,7 @@ async function addLegacyInstaller(app, path, node) {
 	else {
 		if (!app.checksumInstaller.includes(result.checksum)) app.checksumInstaller.push(result.checksum);
 	}
-	app.legacyInstallers.push({path, kind: result.kind});
+	app.legacyInstallers.push({path, kind: result.kind, error: result.error || ''});
 	renderLegacyInstallerList(node, app);
 }
 
@@ -185,6 +200,7 @@ function renderLegacyInstallerList(node, app) {
 		const li = document.createElement('li');
 		const label = entry.kind === 'genuine' ? '✓ setting.sn確認済み' : '⚠ フォールバック（本体チェックサムのみ）';
 		li.textContent = `${basename(entry.path)} — ${label}`;
+		if (entry.error) li.title = entry.error;
 		list.appendChild(li);
 	}
 }
@@ -196,6 +212,21 @@ async function setLatestInstaller(app, os, path, node) {
 	pane.querySelector('.latestPath').value = path;
 	pane.querySelector('.latestUrl').value = '';
 
+	// ファイル名（例: sn_kowloon-1.2.0-x64.dmg）から版とarchを推定して入れる。
+	// 版は未入力のときだけ。archは実ファイルと食い違うと更新判定を誤るので、読み取れたら常に合わせる
+	const fname = basename(path);
+	const ver = fname.match(/(\d+\.\d+(?:\.\d+)?)/);
+	if (ver && !app[os].version) {
+		app[os].version = ver[1];
+		pane.querySelector('.latestVersion').value = ver[1];
+	}
+	const archMatch = fname.match(/(universal|arm64|aarch64|x86_64|x64)/i);
+	if (archMatch) {
+		const arch = {aarch64: 'arm64', x86_64: 'x64'}[archMatch[1].toLowerCase()] || archMatch[1].toLowerCase();
+		app[os].arch = arch;
+		pane.querySelector('.latestArch').value = arch;
+	}
+
 	const checksumResult = await extractChecksumFor(path, app.settingSnFileName);
 	if (checksumResult.kind === 'genuine' && !app.checksumSetting.includes(checksumResult.checksum)) {
 		app.checksumSetting.push(checksumResult.checksum);
@@ -203,6 +234,12 @@ async function setLatestInstaller(app, os, path, node) {
 	else if (checksumResult.kind === 'fallback' && !app.checksumInstaller.includes(checksumResult.checksum)) {
 		app.checksumInstaller.push(checksumResult.checksum);
 	}
+	// setting.snを読めずフォールバックした理由（7-Zip未導入など）を見える所に出す
+	const notice = pane.querySelector('.extractNotice');
+	notice.hidden = checksumResult.kind !== 'fallback';
+	notice.textContent = checksumResult.kind === 'fallback'
+		? `⚠ setting.snを抽出できなかったため、購入者チェックは本体チェックサムで代替します（${checksumResult.error}）`
+		: '';
 
 	const info = await invoke('file_info', {path});
 	app[os].sha256 = info.sha256;
@@ -212,13 +249,13 @@ async function setLatestInstaller(app, os, path, node) {
 async function uploadLatest(app, os, node) {
 	const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
 	const status = pane.querySelector('.uploadStatus');
-	if (!app.appSlug) { alert('先にプロジェクトフォルダを選んでスキャンしてください'); return; }
-	if (!app[os].path) { alert('先にインストーラーを選んでください'); return; }
+	if (!app.appSlug) { notify('先にプロジェクトフォルダを選んでスキャンしてください'); return; }
+	if (!app[os].path) { notify('先にインストーラーを選んでください'); return; }
 
 	status.textContent = 'アップロード中…';
 	try {
 		const config = await invoke('r2_load_config');
-		if (!config || !config.bucket) { alert('先に「ホスティング」タブでR2の設定を保存してください'); status.textContent = ''; return; }
+		if (!config || !config.bucket) { notify('先に「ホスティング」タブでR2の設定を保存してください'); status.textContent = ''; return; }
 
 		const filename = basename(app[os].path);
 		const prefix = `games/${app.appSlug}/${os}/`;
@@ -293,7 +330,7 @@ async function uploadGeneratedLaunchers() {
 	status.textContent = 'アップロード中…';
 	try {
 		const config = await invoke('r2_load_config');
-		if (!config || !config.bucket) { alert('先に「ホスティング」タブでR2の設定を保存してください'); status.textContent = ''; return; }
+		if (!config || !config.bucket) { notify('先に「ホスティング」タブでR2の設定を保存してください'); status.textContent = ''; return; }
 
 		const messages = [];
 		for (const [os, path] of [['mac', lastGenerateResult.macDmgPath], ['win', lastGenerateResult.winExePath]]) {
@@ -407,7 +444,7 @@ $('btnR2Save').addEventListener('click', async () => {
 
 $('btnPublishManifest').addEventListener('click', async () => {
 	const status = $('publishStatus');
-	if (!lastGenerateResult) { alert('先に「作品管理」タブでランチャーを生成してください'); return; }
+	if (!lastGenerateResult) { notify('先に「作品管理」タブでランチャーを生成してください'); return; }
 	status.textContent = 'アップロード中…';
 	try {
 		const config = r2CollectConfig();
@@ -438,7 +475,7 @@ $('btnR2Refresh').addEventListener('click', async () => {
 			delBtn.type = 'button';
 			delBtn.textContent = '削除';
 			delBtn.addEventListener('click', async () => {
-				if (!confirm(`${obj.key} を削除しますか？`)) return;
+				if (!(await askYesNo(`${obj.key} を削除しますか？`))) return;
 				await invoke('r2_delete_object', {config, key: obj.key});
 				$('btnR2Refresh').click();
 			});
@@ -447,7 +484,7 @@ $('btnR2Refresh').addEventListener('click', async () => {
 		}
 	}
 	catch (e) {
-		alert(`一覧取得に失敗: ${e}`);
+		notify(`一覧取得に失敗: ${e}`);
 	}
 });
 
@@ -538,6 +575,6 @@ window.__TAURI__.webviewWindow.getCurrentWebviewWindow().onDragDropEvent(async (
 		scheduleSaveState();
 	}
 	catch (e) {
-		alert(`ドロップの処理に失敗しました：${e}`);
+		notify(`ドロップの処理に失敗しました：${e}`);
 	}
 });

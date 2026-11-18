@@ -47,6 +47,8 @@ npm run app:dev
 生成ツールはこのリポジトリが手元にあるMacでしか動かない（生成のたびに `app/` のmacスタブを
 ビルドし直す）ので、dmg 化して配布するものではない。`gen:build` は不要。
 `app:build` はスタブ単体の動作確認用で、成果物は `dist-local/`（gitignore済み）に出る。
+Winインストーラー（NSIS exe）から `setting.sn` を抽出して購入者チェックに使うには、生成するMacに
+7-Zip（`brew install sevenzip`）が要る。無いと本体チェックサムによる代替になり、生成ツールの作品カードに警告が出る。
 
 ## 生成ツール（開発者向け）
 

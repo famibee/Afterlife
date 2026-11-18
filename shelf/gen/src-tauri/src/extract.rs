@@ -138,7 +138,7 @@ fn run_7z_extract(seven_z: &Path, archive: &Path, out_dir: &Path) -> Result<(), 
 pub fn extract_app_asar_from_nsis_exe(exe_path: &Path) -> Result<Vec<u8>, ExtractError> {
 	let seven_z = find_7z_binary().ok_or_else(|| ExtractError::ToolMissing(
 		"7-Zip（7z/7za/7zz）が見つからない。NSISインストーラーの展開に必要。\
-		 `brew install p7zip`等でインストールしてください".to_string(),
+		 mac: `brew install sevenzip`（7zz）、Win: 7-Zip公式インストーラーで入れてください".to_string(),
 	))?;
 
 	let out_dir = std::env::temp_dir().join(format!("shelf_gen_extract_{}", std::process::id()));
@@ -202,6 +202,21 @@ mod tests {
 		let mut cursor = std::io::Cursor::new(asar);
 		let sn = shelf_core::asar::extract_from_reader(&mut cursor, &name).expect("setting.sn");
 		eprintln!("setting.sn: {} bytes", sn.len());
+		assert!(!sn.is_empty());
+	}
+
+	/// 実物のNSIS exe（要7-Zip）。
+	/// `SHELF_TEST_EXE=<exe> SHELF_TEST_SETTING_SN=<名前> cargo test -p shelf_gen -- --ignored --nocapture real_exe`
+	#[test]
+	#[ignore]
+	fn real_exe_extracts_setting_sn() {
+		let exe = std::env::var("SHELF_TEST_EXE").expect("SHELF_TEST_EXE");
+		let name = std::env::var("SHELF_TEST_SETTING_SN").expect("SHELF_TEST_SETTING_SN");
+		let asar = extract_app_asar_from_nsis_exe(Path::new(&exe)).expect("app.asar");
+		eprintln!("app.asar: {} bytes", asar.len());
+		let mut cursor = std::io::Cursor::new(asar);
+		let sn = shelf_core::asar::extract_from_reader(&mut cursor, &name).expect("setting.sn");
+		eprintln!("setting.sn: {} bytes, checksum {}", sn.len(), shelf_core::checksum::checksum_hex(&sn));
 		assert!(!sn.is_empty());
 	}
 }
