@@ -35,6 +35,19 @@ npm run app:dev
 `ui/` を直したら `cargo build` をやり直す（`frontendDist` を埋め込む構成のため、JS だけ
 直してアプリを再起動しても古いコードのまま）。
 
+## ランチャーを作る手順
+
+1. Win機で `bun run app:build` し、できた `shelf.exe`（`dist-local/`）を Mac の
+   `gen/prebuilt/x86_64-pc-windows-msvc/` に置く（初回・ランチャー本体を変えたときだけ）
+2. Mac で `bun run gen:dev` を起動
+3. サークル・作品・R2・出力先を入力して「ランチャーを生成」
+4. 生成後、マニフェストを R2 に公開
+5. できた dmg と exe を配る
+
+生成ツールはこのリポジトリが手元にあるMacでしか動かない（生成のたびに `app/` のmacスタブを
+ビルドし直す）ので、dmg 化して配布するものではない。`gen:build` は不要。
+`app:build` はスタブ単体の動作確認用で、成果物は `dist-local/`（gitignore済み）に出る。
+
 ## 生成ツール（開発者向け）
 
 ```sh

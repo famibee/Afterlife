@@ -405,11 +405,6 @@ $('btnR2Save').addEventListener('click', async () => {
 	}
 });
 
-function base64ToBytes(b64) {
-	const binary = atob(b64);
-	return Array.from(binary, (c) => c.charCodeAt(0));
-}
-
 $('btnPublishManifest').addEventListener('click', async () => {
 	const status = $('publishStatus');
 	if (!lastGenerateResult) { alert('先に「作品管理」タブでランチャーを生成してください'); return; }
@@ -418,7 +413,9 @@ $('btnPublishManifest').addEventListener('click', async () => {
 		const config = r2CollectConfig();
 		const manifestBytes = Array.from(new TextEncoder().encode(lastGenerateResult.manifestJson));
 		await invoke('r2_upload_bytes', {config, bytes: manifestBytes, key: 'manifest.json'});
-		const sigBytes = base64ToBytes(lastGenerateResult.manifestSignatureB64);
+		// 署名はbase64のテキストのまま置く（ランチャーはテキストとして読んでbase64デコードする。
+		// デコード済みの生バイトを置くと署名検証に失敗し、カードが「確認できません」になる）
+		const sigBytes = Array.from(new TextEncoder().encode(lastGenerateResult.manifestSignatureB64));
 		await invoke('r2_upload_bytes', {config, bytes: sigBytes, key: 'manifest.json.sig'});
 		status.textContent = '✓ 公開しました（manifest.json・manifest.json.sig）';
 	}
