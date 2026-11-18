@@ -121,6 +121,7 @@ SKYNovel/BlueSNovel製ゲーム（同一サークルの複数作品）をまと�
 ## 検証待ち
 
 - **ランチャーのアイコン指定**: macの生成・Winでの見た目（`ExtractAssociatedIcon`で取り出した画像の目視）は2026-11-18に確認済み。残りは、アイコン差し替え後のexe（`ランチャー_アイコン差替え.exe`相当）を**Winで実際に起動できること**と、エクスプローラー上の表示そのもの（取り出した画像でなく実画面）の確認。実物ランチャー（作品アイコン入り）の起動は確認済み。
+- **R2（`bucket-of-blood`）には、大阪九龍条 v1.2.0 の実データを公開済み（2026-11-18、運用開始前）。** `games/sn_kowloon/{mac,win}/…`（実物のインストーラー）と、バケット直下の `manifest.json`・`manifest.json.sig`（本物の署名鍵で署名）。生成済みランチャーはこのマニフェストURLを埋め込んでいるため、消すとランチャーが動かなくなる。公開ベースURLで誰でも取得できる状態。バケット直下の既存 `sn_kowloon/`・`sn_osk_gitayu/` は旧パッチ配布ツールのもので別物なので触らない。公開ベースURLは `https://pub-254c788281004a619c71459f7368fae4.r2.dev`。生成ツールの状態・資格情報は `~/Library/Application Support/com.afterlife.shelf-gen/`、署名鍵は `~/.shelf-gen/signing-key.json`（紛失するとランチャーを全て作り直し）。
 - **Shelf子機（Win/mac）での実ゲーム操作・実際のインストール上書きは未検証。** 第1段階は
   `dev-fixtures/` の偽インストールのみで検証済み（`SHELF_MAC_APPS_DIR`・`SHELF_CONFIG` で実機の
   `/Applications` を汚さずに検証できる）。**mac側はM6で試みたが実施できず（2026-11-17）**:
