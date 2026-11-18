@@ -26,6 +26,7 @@ const STATUS_LABEL = {
 	checking: '確認中…',
 	upToDate: '✓ 最新です',
 	updateAvailable: '更新あり',
+	noUpdateForOs: 'このOS向けの更新なし',
 	archMigration: '更新あり（移行）',
 	notGenuine: '製品版を確認できません',
 	needsConfirmation: '確認が必要',
@@ -39,6 +40,7 @@ const BADGE_CLASS = {
 	upToDate: 'badge-ok',
 	updateAvailable: 'badge-warn',
 	archMigration: 'badge-warn',
+	noUpdateForOs: 'badge-muted',
 	notGenuine: 'badge-error',
 	needsConfirmation: 'badge-error',
 	manifestError: 'badge-error',
@@ -48,14 +50,14 @@ const BADGE_CLASS = {
 // 上段（何らかのローカルインストールを検出できている）に出す状態。
 // needsConfirmationも「フォルダは見つかったが中身を自動検証できない」だけなので上段に出す
 const LOCAL_INSTALL_STATES = new Set([
-	'upToDate', 'updateAvailable', 'archMigration', 'notGenuine', 'needsConfirmation', 'manifestErrorInstalled',
+	'upToDate', 'updateAvailable', 'archMigration', 'noUpdateForOs', 'notGenuine', 'needsConfirmation', 'manifestErrorInstalled',
 ]);
 
 // 「起動」ボタンを出す状態。needsConfirmationは意図的に含めない（自動検出そのものに
 // 失敗しており、起動対象として確からしいとすら言えないため。「当時のインストーラーを
 // 選ぶ」のみを案内する。設計表＝計画の「カードの状態」参照）
 const CAN_LAUNCH_STATES = new Set([
-	'upToDate', 'updateAvailable', 'archMigration', 'notGenuine', 'manifestErrorInstalled',
+	'upToDate', 'updateAvailable', 'archMigration', 'noUpdateForOs', 'notGenuine', 'manifestErrorInstalled',
 ]);
 
 const cardNodes = new Map();	// appId -> カードのDOMノード
@@ -134,7 +136,8 @@ function applyCard(node, card) {
 	node.querySelector('.cardName').textContent = card.appName;
 
 	const versionEl = node.querySelector('.cardVersion');
-	versionEl.textContent = card.latestVersion ? `最新: ${card.latestVersion}` : '';
+	// このOS向けの配布物が無いときの「最新」は他OSの版なので出さない（誤解のもと）
+	versionEl.textContent = card.latestVersion && card.status !== 'noUpdateForOs' ? `最新: ${card.latestVersion}` : '';
 
 	const icon = node.querySelector('.cardIconImg');
 	if (card.iconPngBase64) {

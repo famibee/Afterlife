@@ -89,6 +89,7 @@ section + section { margin-top: 24px; }
 
 .statusBadge.badge-ok { color: var(--ok); }
 .statusBadge.badge-warn { color: var(--warn); }
+.statusBadge.badge-muted { opacity: .7; }
 .statusBadge.badge-error { color: var(--error); }
 
 .cardActions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }

@@ -34,6 +34,7 @@ let genSettings = {launcherName: '', manifestUrl: '', manualUrl: '', outputDir: 
 let apps = [];	// 各要素は下のappCardNodes.get(id)のDOMノードと対になる
 let appCounter = 0;
 const appCardNodes = new Map();	// id -> DOMノード
+let cancelSeq = 0;	// 公開取り消しの通し番号。lastGenerateResult.cancelSeq以下の取り消しだけが、その生成物のマニフェストに反映済み
 let lastGenerateResult = null;	// generate_launchersの戻り値（マニフェスト公開ボタンが使う）
 
 let saveTimer = null;
@@ -55,6 +56,7 @@ function newApp() {
 		settingSnFileName: 'setting.sn', crypto: false,
 		iconPngBase64: '',
 		checksumSetting: [], checksumInstaller: [],
+		pendingDeletes: [],	// 公開取り消し済みで、マニフェスト再公開後にR2から消すもの [{os, prefix, seq}]
 		legacyInstallers: [],	// [{path, kind: 'genuine'|'fallback'}]
 		mac: {path: '', version: '', arch: 'universal', sha256: '', size: 0, url: ''},
 		win: {path: '', version: '', arch: 'x64', sha256: '', size: 0, url: ''},
@@ -135,18 +137,7 @@ function renderApp(app) {
 		pane.querySelector('.btnUploadLatest').addEventListener('click', async () => {
 			await uploadLatest(app, os, node);
 		});
-		pane.querySelector('.btnClearLatest').addEventListener('click', () => {
-			// この版を配布しない状態に戻す（マニフェストにはこのOSの項目が入らない）
-			app[os] = {path: '', version: '', arch: os === 'mac' ? 'universal' : 'x64', sha256: '', size: 0, url: ''};
-			pane.querySelector('.latestPath').value = '';
-			pane.querySelector('.latestVersion').value = '';
-			pane.querySelector('.latestArch').value = app[os].arch;
-			pane.querySelector('.latestUrl').value = '';
-			pane.querySelector('.uploadStatus').textContent = '';
-			pane.querySelector('.extractNotice').hidden = true;
-			updateOsAbsent(app, node);
-			scheduleSaveState();
-		});
+		pane.querySelector('.btnClearLatest').addEventListener('click', () => cancelOsPublish(app, os, node));
 	}
 
 	return node;
@@ -411,12 +402,44 @@ async function publishPatch(app, node) {
 	}
 }
 
+// 公開取り消し: この版を配布しない状態に戻す。
+// R2のインストーラーは、マニフェストを再公開（外したOSの入ったランチャー再生成→アップロード）した「後」に削除する。
+// 先に消すと、古いマニフェストを読む配布済みランチャーの更新が、消えたファイルを取りに行って失敗するため
+async function cancelOsPublish(app, os, node) {
+	const label = os === 'mac' ? 'mac' : 'win';
+	const published = !!app[os].url;
+	const msg = published
+		? `${app.displayName || app.appId} の${label}版の公開を取り消しますか？\n\n・マニフェストから${label}版を外します（ランチャーを生成し直し、マニフェストをアップロードしたとき反映）\n・R2のインストーラーは、そのマニフェスト公開のあとで削除します`
+		: `${label}版の選択を取り消しますか？`;
+	if (!(await askYesNo(msg))) return;
+	if (published && app.appSlug) {
+		cancelSeq += 1;
+		app.pendingDeletes = (app.pendingDeletes || []).filter((d) => d.os !== os);
+		app.pendingDeletes.push({os, prefix: `games/${app.appSlug}/${os}/`, seq: cancelSeq});
+	}
+	const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
+	app[os] = {path: '', version: '', arch: os === 'mac' ? 'universal' : 'x64', sha256: '', size: 0, url: ''};
+	pane.querySelector('.latestPath').value = '';
+	pane.querySelector('.latestVersion').value = '';
+	pane.querySelector('.latestArch').value = app[os].arch;
+	pane.querySelector('.latestUrl').value = '';
+	pane.querySelector('.uploadStatus').textContent = '';
+	pane.querySelector('.extractNotice').hidden = true;
+	updateOsAbsent(app, node);
+	scheduleSaveState();
+}
+
 // そのOSの最新版が未登録（＝配布しない）ときの説明を出し、クリア・アップロードのボタンを出し分ける
 function updateOsAbsent(app, node) {
 	for (const os of ['mac', 'win']) {
 		const pane = node.querySelector(`.os-pane[data-os="${os}"]`);
 		const absent = !app[os].path && !app[os].url;
-		pane.querySelector('.osAbsent').hidden = !absent;
+		const pending = (app.pendingDeletes || []).some((d) => d.os === os);
+		const hint = pane.querySelector('.osAbsent');
+		hint.hidden = !absent;
+		hint.textContent = pending
+			? '公開取り消し済み：ランチャーを生成し直してマニフェストをアップロードすると、R2のインストーラーも削除されます'
+			: '未登録：このOS向けは配布しません（ランチャーでは「このOS向けの更新なし」と表示）';
 		pane.querySelector('.btnClearLatest').hidden = absent;
 		pane.classList.toggle('os-absent', absent);
 	}
@@ -514,6 +537,8 @@ async function uploadLatest(app, os, node) {
 			status.textContent = '✓ アップロード完了';
 		}
 		app[os].url = url;
+		app.pendingDeletes = (app.pendingDeletes || []).filter((d) => d.os !== os);
+		updateOsAbsent(app, node);
 		pane.querySelector('.latestUrl').value = url;
 
 		try {
@@ -630,6 +655,7 @@ $('btnGenerate').addEventListener('click', async () => {
 		};
 		const result = await invoke('generate_launchers', {request});
 		lastGenerateResult = result;
+		lastGenerateResult.cancelSeq = cancelSeq;
 		const lines = [
 			result.macDmgPath ? `✅ mac: ${result.macDmgPath}` : '✗ mac: 生成失敗',
 			result.winExePath ? `✅ win: ${result.winExePath}` : `⚠ win: ${result.winSkippedReason}`,
@@ -713,7 +739,26 @@ $('btnPublishManifest').addEventListener('click', async () => {
 		// デコード済みの生バイトを置くと署名検証に失敗し、カードが「確認できません」になる）
 		const sigBytes = Array.from(new TextEncoder().encode(lastGenerateResult.manifestSignatureB64));
 		await invoke('r2_upload_bytes', {config, bytes: sigBytes, key: 'manifest.json.sig'});
-		status.textContent = '✓ 公開しました（manifest.json・manifest.json.sig）';
+		// マニフェストから外したOSのインストーラーを、公開が済んだ今になって消す
+		// （このマニフェストの生成後に取り消したものは、まだ参照されているので消さない）
+		const removed = [];
+		for (const a of apps) {
+			const keep = [];
+			for (const d of a.pendingDeletes || []) {
+				if (a[d.os] && a[d.os].url) continue;	// 取り消し後に同じOSを上げ直した。新しいファイルを消さない
+				if (d.seq > (lastGenerateResult.cancelSeq || 0)) { keep.push(d); continue; }
+				try {
+					const keys = await invoke('r2_delete_not_in', {config, prefix: d.prefix, keepKeys: []});
+					removed.push(...keys);
+				}
+				catch (e) { keep.push(d); notify(`R2の削除に失敗（${d.prefix}）: ${e}`); }
+			}
+			a.pendingDeletes = keep;
+			const node = appCardNodes.get(a.id);
+			if (node) updateOsAbsent(a, node);
+		}
+		scheduleSaveState();
+		status.textContent = `✓ 公開しました（manifest.json・manifest.json.sig）${removed.length ? `／取り消した版のインストーラー${removed.length}件をR2から削除` : ''}`;
 	}
 	catch (e) {
 		status.textContent = `失敗: ${e}`;
@@ -767,6 +812,7 @@ async function loadInitialState() {
 		$('launcherIconPath').value = genSettings.launcherIconPath || '';
 
 		for (const saved of state.apps || []) {
+			for (const d of saved.pendingDeletes || []) cancelSeq = Math.max(cancelSeq, d.seq || 0);
 			addAppCard(saved);
 			appCounter = Math.max(appCounter, Number(String(saved.id).split('-')[1]) || 0);
 		}

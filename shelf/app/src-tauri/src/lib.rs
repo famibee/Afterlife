@@ -60,6 +60,7 @@ fn status_label(status: &status::CardStatus) -> String {
 		status::CardStatus::UpToDate => "upToDate",
 		status::CardStatus::UpdateAvailable => "updateAvailable",
 		status::CardStatus::ArchMigration => "archMigration",
+		status::CardStatus::NoUpdateForOs => "noUpdateForOs",
 		status::CardStatus::NotGenuine => "notGenuine",
 		status::CardStatus::NeedsConfirmation => "needsConfirmation",
 		status::CardStatus::NotInstalled { event_only: true } => "notInstalledEventOnly",
@@ -75,9 +76,7 @@ fn build_card(entry: &config::AppEntry, manifest: Option<&manifest::Manifest>) -
 	let local = inspect::inspect_local(entry, platform, &mac_apps_dir(), &win_dirs());
 	let manifest_app = manifest.and_then(|m| m.app(&entry.app_id));
 	let artifact = manifest_app.and_then(|a| a.for_platform(platform));
-	let artifact_arch = artifact.map(|a| a.arch.as_str());
-
-	let card_status = status::decide_status(&local, manifest_app, artifact_arch);
+	let card_status = status::decide_status_for_os(&local, manifest_app, artifact);
 
 	let installed_version = match &local {
 		inspect::LocalState::Installed { version, .. } => version.clone(),

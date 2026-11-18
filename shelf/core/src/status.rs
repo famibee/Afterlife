@@ -3,7 +3,7 @@
 // （旧実装はチェックサム不一致＝NotInstalled〈カード非表示〉だったが、Shelfでは
 // 「インストールはされているが製品版と確認できない」ことを利用者に伝え、購入を案内する）。
 
-use crate::{detect::Arch, inspect::LocalState, manifest::ManifestApp, version};
+use crate::{detect::Arch, inspect::LocalState, manifest::{ManifestApp, OsArtifact}, version};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardStatus {
@@ -15,6 +15,9 @@ pub enum CardStatus {
 	UpdateAvailable,
 	/// 検出あり・版は同じだがarchが一致しない（例：旧x64購入者にuniversal版への移行を促す）
 	ArchMigration,
+	/// 検出あり・マニフェスト上は新しい版があるが、このOS向けの配布物が無い
+	/// （片方のOSだけ新版を出した場合。更新ボタンは出さない）
+	NoUpdateForOs,
 	/// 検出はあるがチェックサム不一致（体験版・改変等）
 	NotGenuine,
 	/// 自動検出に失敗したが、インストーラー本体によるフォールバック判定が使える
@@ -23,6 +26,20 @@ pub enum CardStatus {
 	NotInstalled { event_only: bool },
 	/// マニフェストの取得・署名検証に失敗した。ローカル検査の結果だけで出せる範囲で表示する
 	ManifestError { locally_installed: bool },
+}
+
+/// このOS向けの配布物 `artifact`（無ければNone）まで加味した判定。
+/// 配布物が無いのに「更新あり」になる場合は、押してもエラーになるだけなので NoUpdateForOs にする
+pub fn decide_status_for_os(
+	local: &LocalState,
+	manifest_app: Option<&ManifestApp>,
+	artifact: Option<&OsArtifact>,
+) -> CardStatus {
+	let status = decide_status(local, manifest_app, artifact.map(|a| a.arch.as_str()));
+	match (&status, artifact) {
+		(CardStatus::UpdateAvailable | CardStatus::ArchMigration, None) => CardStatus::NoUpdateForOs,
+		_ => status,
+	}
 }
 
 /// `local` はローカル検査の結果、`manifest_app` は対応するマニフェスト項目
@@ -172,5 +189,37 @@ mod tests {
 		let installed_local = installed(Some("1.0.0"), None);
 		assert_eq!(decide_status(&installed_local, None, None), CardStatus::ManifestError { locally_installed: true });
 		assert_eq!(decide_status(&LocalState::NotInstalled, None, None), CardStatus::ManifestError { locally_installed: false });
+	}
+
+	fn artifact(arch: &str) -> OsArtifact {
+		OsArtifact { arch: arch.to_string(), kind: "dmg".to_string(), sha256: String::new(), size: 0, url: String::new(), grant_url: None }
+	}
+
+	#[test]
+	fn newer_version_without_artifact_for_this_os_is_no_update_for_os() {
+		let app = app_with_version("2.0.0");
+		let local = installed(Some("1.0.0"), None);
+		assert_eq!(decide_status_for_os(&local, Some(&app), None), CardStatus::NoUpdateForOs);
+		// 版が読めない場合も、配布物が無ければ更新を案内しない
+		assert_eq!(decide_status_for_os(&installed(None, None), Some(&app), None), CardStatus::NoUpdateForOs);
+	}
+
+	#[test]
+	fn newer_version_with_artifact_is_still_update_available() {
+		let app = app_with_version("2.0.0");
+		let local = installed(Some("1.0.0"), None);
+		assert_eq!(decide_status_for_os(&local, Some(&app), Some(&artifact("x64"))), CardStatus::UpdateAvailable);
+	}
+
+	#[test]
+	fn same_version_without_artifact_stays_up_to_date() {
+		let app = app_with_version("1.0.0");
+		assert_eq!(decide_status_for_os(&installed(Some("1.0.0"), None), Some(&app), None), CardStatus::UpToDate);
+	}
+
+	#[test]
+	fn not_installed_without_artifact_is_unchanged() {
+		let app = app_with_version("2.0.0");
+		assert_eq!(decide_status_for_os(&LocalState::NotInstalled, Some(&app), None), CardStatus::NotInstalled { event_only: false });
 	}
 }
